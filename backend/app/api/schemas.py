@@ -29,12 +29,23 @@ class Citation(BaseModel):
     text_preview: str = ""
 
 
+class AgentEvent(BaseModel):
+    node: str
+    event_type: str
+    message: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class ChatResponse(BaseModel):
     answer: str
     session_id: str
     citations: list[Citation]
     retrieval_count: int
     model: str
+    route: str | None = None
+    current_node: str | None = None
+    validation_passed: bool | None = None
+    agent_events: list[AgentEvent] = Field(default_factory=list)
 
 
 class HealthResponse(BaseModel):
