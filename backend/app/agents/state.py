@@ -27,6 +27,8 @@ class AgentState(TypedDict, total=False):
     route: Route
     retrieved_docs: list[dict[str, Any]]
     research_notes: str
+    research_plan: dict[str, Any]
+    batch_summaries: list[dict[str, Any]]
     sub_queries: list[str]
 
     tool_calls: list[dict[str, Any]]

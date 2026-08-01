@@ -11,7 +11,8 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from backend.app.agents.events import make_event
-from backend.app.agents.prompts import RESEARCH_PROMPT, RESPONSE_PROMPT, SUPERVISOR_PROMPT
+from backend.app.agents.prompts import RESPONSE_PROMPT, SUPERVISOR_PROMPT
+from backend.app.agents.rlm import run_rlm_pipeline
 from backend.app.agents.state import AgentState, Route
 from backend.app.llm.provider import get_chat_llm
 from backend.app.observability.langsmith_config import build_run_config
@@ -83,46 +84,38 @@ class AgentNodes:
         }
 
     async def research(self, state: AgentState) -> dict[str, Any]:
-        sub_queries = await self._build_sub_queries(state)
-        merged: dict[str, RetrievalHit] = {}
-
-        for sub_query in sub_queries:
-            hits = await self._search(sub_query, state, top_k=4)
-            for hit in hits:
-                existing = merged.get(hit.chunk_id)
-                if existing is None or hit.hybrid_score > existing.hybrid_score:
-                    merged[hit.chunk_id] = hit
-
-        ranked = sorted(merged.values(), key=lambda h: h.hybrid_score, reverse=True)[:8]
-        docs = []
-        for hit in ranked:
-            doc = hit.to_dict()
-            doc["text"] = hit.text
-            docs.append(doc)
-        notes = (
-            f"Research covered {len(sub_queries)} sub-queries and merged "
-            f"{len(docs)} unique chunks."
+        question = state["user_question"]
+        rlm_result = await run_rlm_pipeline(
+            question=question,
+            state=state,
+            retriever=self._retriever,
         )
 
+        batch_summaries = [
+            {
+                "batch_id": r.batch.batch_id,
+                "focus": r.batch.focus,
+                "query": r.batch.query,
+                "chunk_count": len(r.docs),
+                "summary": r.summary,
+            }
+            for r in rlm_result.batch_results
+        ]
+
         return {
-            "sub_queries": sub_queries,
-            "retrieved_docs": docs,
-            "research_notes": notes,
+            "sub_queries": [b.query for b in rlm_result.plan.batches],
+            "research_plan": {
+                "objective": rlm_result.plan.objective,
+                "batches": [
+                    {"id": b.batch_id, "query": b.query, "focus": b.focus}
+                    for b in rlm_result.plan.batches
+                ],
+            },
+            "batch_summaries": batch_summaries,
+            "retrieved_docs": rlm_result.retrieved_docs,
+            "research_notes": rlm_result.research_notes,
             "current_node": "research",
-            "agent_events": [
-                make_event(
-                    "research",
-                    "research_plan",
-                    "Generated sub-queries for multi-document research",
-                    sub_queries=sub_queries,
-                ),
-                make_event(
-                    "research",
-                    "research_complete",
-                    notes,
-                    chunk_count=len(docs),
-                ),
-            ],
+            "agent_events": rlm_result.agent_events,
         }
 
     async def response(self, state: AgentState) -> dict[str, Any]:
@@ -216,36 +209,6 @@ class AgentNodes:
             logger.warning("Supervisor LLM routing failed; using heuristics")
             return heuristic_route, heuristic_plan
 
-    async def _build_sub_queries(self, state: AgentState) -> list[str]:
-        question = state["user_question"]
-        defaults = _default_sub_queries(question)
-
-        llm = get_chat_llm()
-        run_config = build_run_config(
-            run_name="research_planning",
-            request_id=state.get("request_id"),
-            session_id=state.get("session_id"),
-            user_role=state.get("user_role"),
-            tags=["agent", "research"],
-        )
-
-        try:
-            response = await asyncio.to_thread(
-                llm.invoke,
-                [
-                    SystemMessage(content=RESEARCH_PROMPT),
-                    HumanMessage(content=f"Question: {question}"),
-                ],
-                config=run_config,
-            )
-            parsed = _parse_json(str(response.content))
-            sub_queries = parsed.get("sub_queries") or defaults
-            cleaned = [q.strip() for q in sub_queries if isinstance(q, str) and q.strip()]
-            return cleaned[:4] if cleaned else defaults
-        except Exception:
-            logger.warning("Research planning LLM failed; using default sub-queries")
-            return defaults
-
     async def _search(
         self,
         query: str,
@@ -279,7 +242,17 @@ class AgentNodes:
             tags=["agent", "response"],
         )
         research_notes = state.get("research_notes")
-        extra = f"\nResearch notes: {research_notes}" if research_notes else ""
+        batch_summaries = state.get("batch_summaries") or []
+        extra_parts = []
+        if research_notes:
+            extra_parts.append(f"Research notes:\n{research_notes}")
+        if batch_summaries:
+            partials = "\n".join(
+                f"- [{b.get('batch_id')}] {b.get('summary', '')[:300]}"
+                for b in batch_summaries
+            )
+            extra_parts.append(f"Batch partial summaries:\n{partials}")
+        extra = f"\n\n{chr(10).join(extra_parts)}" if extra_parts else ""
 
         response = await asyncio.to_thread(
             llm.invoke,
@@ -305,15 +278,6 @@ def _heuristic_route(question: str) -> tuple[Route, str]:
     if any(re.search(pattern, lowered) for pattern in COMPLEX_QUERY_PATTERNS):
         return "research", "Multi-document synthesis required"
     return "retrieval", "Direct knowledge lookup"
-
-
-def _default_sub_queries(question: str) -> list[str]:
-    base = question.strip()
-    return [
-        base,
-        f"{base} incident reports",
-        f"{base} runbooks policies",
-    ]
 
 
 def _parse_json(text: str) -> dict[str, Any]:
