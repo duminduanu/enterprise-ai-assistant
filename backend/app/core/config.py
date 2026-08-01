@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     auth_required: bool = False
 
     google_api_key: str = ""
-    llm_model: str = "gemini-2.0-flash"
+    llm_model: str = "gemini-3.1-flash-lite"
 
     pinecone_api_key: str = ""
     pinecone_index_name: str = "enterprise-ai-assistant-gemini"

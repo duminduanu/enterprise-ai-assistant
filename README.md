@@ -25,7 +25,7 @@ Full diagram and design notes: **[docs/architecture.md](docs/architecture.md)**
 | Orchestration | LangGraph |
 | Vector DB | Pinecone (dense) + in-process BM25 (sparse) |
 | Observability | LangSmith |
-| LLM | Google Gemini (`gemini-2.0-flash`) |
+| LLM | Google Gemini (`gemini-3.1-flash-lite`) |
 | Embeddings | Google Gemini (`gemini-embedding-001`, 768 dims) |
 | MCP | In-process enterprise data server |
 
@@ -166,7 +166,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/search \
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `GOOGLE_API_KEY` | — | Gemini LLM + embeddings |
-| `LLM_MODEL` | `gemini-2.0-flash` | Chat model |
+| `LLM_MODEL` | `gemini-3.1-flash-lite` | Chat model |
 | `EMBEDDING_MODEL` | `gemini-embedding-001` | Embedding model |
 | `EMBEDDING_DIMENSION` | `768` | Must match Pinecone index |
 | `PINECONE_API_KEY` | — | Pinecone API key |
@@ -188,7 +188,7 @@ curl -X POST http://127.0.0.1:8000/api/v1/search \
 
 - **Free tier** via Google AI Studio (no paid OpenAI credits required)
 - **Single provider** for LLM and embeddings
-- **`gemini-2.0-flash`** — strong speed/quality for multi-agent orchestration
+- **`gemini-3.1-flash-lite`** — GA replacement for deprecated 2.x/2.5 models; new Google accounts cannot use `gemini-2.5-flash-lite` (404). Match `LLM_MODEL` to a model listed on your AI Studio rate-limit page.
 - **`gemini-embedding-001`** — 768-dim vectors matching Pinecone index
 
 **Trade-offs:**
@@ -249,7 +249,7 @@ python scripts/test_error_handling.py
 ## Demo video
 
 <!-- Add your public demo URL here after recording -->
-**Demo video:** _[Link to 45-min walkthrough — architecture, code, live demo, LangSmith traces]_
+**Demo video:** _[Link to walkthrough — architecture, code, live demo, LangSmith traces]_
 
 Suggested demo flow:
 

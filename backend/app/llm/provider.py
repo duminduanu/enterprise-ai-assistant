@@ -49,7 +49,7 @@ def load_provider_settings(env_path: str | None = None) -> ProviderSettings:
 
     return ProviderSettings(
         llm_provider="gemini",
-        llm_model=os.getenv("LLM_MODEL", "gemini-2.0-flash"),
+        llm_model=os.getenv("LLM_MODEL", "gemini-3.1-flash-lite"),
         embedding_provider="gemini",
         embedding_model=os.getenv("EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL),
         embedding_dimension=int(os.getenv("EMBEDDING_DIMENSION", "768")),
