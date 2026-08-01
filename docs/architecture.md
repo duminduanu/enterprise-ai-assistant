@@ -63,12 +63,16 @@ stateDiagram-v2
     [*] --> supervisor
     supervisor --> retrieval: route=retrieval
     supervisor --> research: route=research
+    retrieval --> research: empty context escalation
     retrieval --> tools
     research --> tools
     tools --> response
     response --> validate
+    validate --> response: self-correction (once)
     validate --> [*]
 ```
+
+Collaboration details (shared state, failure chains, butterfly-effect containment): [multi-agent-collaboration.md](multi-agent-collaboration.md).
 
 | Node | Responsibility |
 |------|----------------|

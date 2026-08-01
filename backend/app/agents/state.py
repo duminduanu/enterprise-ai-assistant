@@ -43,3 +43,14 @@ class AgentState(TypedDict, total=False):
     validation_issues: list[str]
     llm_available: bool
     stream_tokens: bool
+    retry_response: bool
+
+    # Multi-agent collaboration (Step S bonus)
+    node_status: dict[str, str]
+    failure_chain: Annotated[list[dict[str, Any]], operator.add]
+    handoff_notes: Annotated[list[dict[str, Any]], operator.add]
+    degraded_mode: bool
+    degraded_reasons: Annotated[list[str], operator.add]
+    retrieval_escalated: bool
+    correction_attempts: int
+    butterfly_impact: dict[str, Any]

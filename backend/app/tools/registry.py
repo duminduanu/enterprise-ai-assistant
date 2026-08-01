@@ -185,7 +185,34 @@ async def run_tool_node(
 
     Injects user_role into knowledge_search calls when missing.
     """
+    from backend.app.agents.collaboration import (
+        record_failure,
+        record_handoff,
+        should_skip_tools,
+        update_node_status,
+    )
     from backend.app.agents.events import make_event
+
+    skip, skip_reason = should_skip_tools(state)
+    if skip:
+        return {
+            "current_node": "tools",
+            **update_node_status(state, "tools", "skipped", detail=skip_reason),
+            **record_handoff(
+                state,
+                from_node="tools",
+                to_node="response",
+                summary=skip_reason,
+            ),
+            "agent_events": [
+                make_event(
+                    "tools",
+                    "tools_skipped",
+                    skip_reason,
+                    containment=True,
+                )
+            ],
+        }
 
     planned = plan_tool_calls(state)
     if not planned:
@@ -278,8 +305,22 @@ async def run_tool_node(
                 tools=[c["name"] for c in tool_calls_payload],
             )
         )
+        failure_patch = record_failure(
+            state,
+            source_node="tools",
+            error_type="tool_timeout",
+            message=str(exc.message),
+        )
         return {
             "current_node": "tools",
+            **update_node_status(state, "tools", "failed"),
+            **failure_patch,
+            **record_handoff(
+                state,
+                from_node="tools",
+                to_node="response",
+                summary="Tool execution timed out; continuing without tool output.",
+            ),
             "analysis_results": tool_failure_payload(tool_names, str(exc.message)),
             "agent_events": events,
         }
@@ -293,8 +334,22 @@ async def run_tool_node(
                 tools=[c["name"] for c in tool_calls_payload],
             )
         )
+        failure_patch = record_failure(
+            state,
+            source_node="tools",
+            error_type=type(exc).__name__,
+            message=str(exc)[:200],
+        )
         return {
             "current_node": "tools",
+            **update_node_status(state, "tools", "failed"),
+            **failure_patch,
+            **record_handoff(
+                state,
+                from_node="tools",
+                to_node="response",
+                summary="Tool execution failed; errors excluded from synthesis prompt.",
+            ),
             "analysis_results": tool_failure_payload(tool_names, str(exc)[:200]),
             "agent_events": events,
         }
@@ -335,5 +390,13 @@ async def run_tool_node(
         "mcp_results": combined_mcp,
         "tool_calls": tool_calls_log,
         "current_node": "tools",
+        **update_node_status(state, "tools", "ok"),
+        **record_handoff(
+            state,
+            from_node="tools",
+            to_node="response",
+            summary=f"Completed {len(tool_calls_log)} tool call(s).",
+            tools=[c.get("tool") for c in tool_calls_log],
+        ),
         "agent_events": events,
     }

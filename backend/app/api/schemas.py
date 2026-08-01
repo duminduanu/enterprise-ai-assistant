@@ -48,6 +48,10 @@ class ChatResponse(BaseModel):
     agent_events: list[AgentEvent] = Field(default_factory=list)
     history_turns: int = 0
     user_role: UserRole | None = None
+    degraded_mode: bool | None = None
+    failure_count: int = 0
+    handoff_count: int = 0
+    butterfly_severity: str | None = None
 
 
 class HealthResponse(BaseModel):

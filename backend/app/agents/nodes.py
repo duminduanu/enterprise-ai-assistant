@@ -9,6 +9,17 @@ from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from backend.app.agents.collaboration import (
+    build_retrieval_escalation,
+    build_validation_correction,
+    format_degraded_banner,
+    format_handoffs_for_prompt,
+    record_failure,
+    record_handoff,
+    route_after_retrieval,
+    sanitize_tool_output_for_prompt,
+    update_node_status,
+)
 from backend.app.agents.events import make_event
 from backend.app.agents.prompts import RESPONSE_PROMPT, SUPERVISOR_PROMPT
 from backend.app.agents.rlm import run_rlm_pipeline
@@ -58,10 +69,19 @@ class AgentNodes:
         question = state["user_question"]
         route, plan = await self._decide_route(question, state)
 
+        handoff_target = "research" if route == "research" else "retrieval"
         return {
             "route": route,
             "plan": plan,
             "current_node": "supervisor",
+            **update_node_status(state, "supervisor", "ok", detail=f"route={route}"),
+            **record_handoff(
+                state,
+                from_node="supervisor",
+                to_node=handoff_target,  # type: ignore[arg-type]
+                summary=f"Plan: {plan}",
+                route=route,
+            ),
             "agent_events": [
                 make_event(
                     "supervisor",
@@ -96,21 +116,49 @@ class AgentNodes:
             docs = json.loads(raw)
         except (ToolTimeoutError, json.JSONDecodeError, Exception) as exc:
             logger.warning("Retrieval node failed: %s", exc)
+            msg = retrieval_failed_message(str(exc)[:120])
+            failure_patch = record_failure(
+                state,
+                source_node="retrieval",
+                error_type=type(exc).__name__,
+                message=str(exc)[:200],
+            )
             return {
                 "retrieved_docs": [],
                 "current_node": "retrieval",
+                **update_node_status(state, "retrieval", "failed", detail=str(exc)[:80]),
+                **failure_patch,
+                **record_handoff(
+                    state,
+                    from_node="retrieval",
+                    to_node="tools",
+                    summary="Retrieval failed; downstream agents should use containment/fallback.",
+                    doc_count=0,
+                ),
                 "agent_events": [
                     make_event(
                         "retrieval",
                         "retrieval_failed",
-                        retrieval_failed_message(str(exc)[:120]),
+                        msg,
                     )
                 ],
             }
 
-        return {
+        next_route = route_after_retrieval(
+            {**state, "retrieved_docs": docs, "node_status": {**(state.get("node_status") or {}), "retrieval": "ok"}}
+        )
+        to_node = "research" if next_route == "research" else "tools"
+        result: dict[str, Any] = {
             "retrieved_docs": docs,
             "current_node": "retrieval",
+            **update_node_status(state, "retrieval", "ok" if docs else "degraded"),
+            **record_handoff(
+                state,
+                from_node="retrieval",
+                to_node=to_node,  # type: ignore[arg-type]
+                summary=f"Retrieved {len(docs)} chunks; next={next_route}.",
+                doc_count=len(docs),
+            ),
             "tool_calls": [
                 {
                     "tool": "knowledge_search",
@@ -127,17 +175,44 @@ class AgentNodes:
                 )
             ],
         }
+        if next_route == "research":
+            result.update(build_retrieval_escalation({**state, **result}))
+        return result
 
     async def tools(self, state: AgentState) -> dict[str, Any]:
         return await run_tool_node(state, self._tool_node)
 
     async def research(self, state: AgentState) -> dict[str, Any]:
         question = state["user_question"]
-        rlm_result = await run_rlm_pipeline(
-            question=question,
-            state=state,
-            retriever=self._retriever,
-        )
+        try:
+            rlm_result = await run_rlm_pipeline(
+                question=question,
+                state=state,
+                retriever=self._retriever,
+            )
+        except Exception as exc:
+            logger.exception("Research node failed")
+            return {
+                "retrieved_docs": [],
+                "research_notes": "",
+                "current_node": "research",
+                **update_node_status(state, "research", "failed", detail=str(exc)[:80]),
+                **record_failure(
+                    state,
+                    source_node="research",
+                    error_type=type(exc).__name__,
+                    message=str(exc)[:200],
+                ),
+                **record_handoff(
+                    state,
+                    from_node="research",
+                    to_node="tools",
+                    summary="RLM pipeline failed; continuing with empty research context.",
+                ),
+                "agent_events": [
+                    make_event("research", "research_failed", f"RLM failed: {exc}"),
+                ],
+            }
 
         batch_summaries = [
             {
@@ -149,6 +224,8 @@ class AgentNodes:
             }
             for r in rlm_result.batch_results
         ]
+        doc_count = len(rlm_result.retrieved_docs)
+        status = "ok" if doc_count else "degraded"
 
         return {
             "sub_queries": [b.query for b in rlm_result.plan.batches],
@@ -163,6 +240,14 @@ class AgentNodes:
             "retrieved_docs": rlm_result.retrieved_docs,
             "research_notes": rlm_result.research_notes,
             "current_node": "research",
+            **update_node_status(state, "research", status),
+            **record_handoff(
+                state,
+                from_node="research",
+                to_node="tools",
+                summary=f"RLM complete: {len(batch_summaries)} batches, {doc_count} unique chunks.",
+                batches=len(batch_summaries),
+            ),
             "agent_events": rlm_result.agent_events,
         }
 
@@ -183,13 +268,36 @@ class AgentNodes:
             logger.exception("Response node LLM failed")
             answer = llm_unavailable_answer(question, docs)
             llm_available = False
+            failure_patch = record_failure(
+                state,
+                source_node="response",
+                error_type="llm_unavailable",
+                message="Answer synthesis unavailable",
+                recoverable=True,
+            )
             if writer is not None:
                 writer({"type": "token", "content": answer})
+        else:
+            failure_patch = {}
 
         return {
             "final_answer": answer,
             "llm_available": llm_available,
             "current_node": "response",
+            "retry_response": False,
+            **update_node_status(
+                state,
+                "response",
+                "ok" if llm_available else "degraded",
+            ),
+            **failure_patch,
+            **record_handoff(
+                state,
+                from_node="response",
+                to_node="validate",
+                summary="Draft answer ready for guardrail validation.",
+                llm_available=llm_available,
+            ),
             "agent_events": [
                 make_event(
                     "response",
@@ -197,6 +305,7 @@ class AgentNodes:
                     "Draft answer composed from retrieved context",
                     llm_available=llm_available,
                     context_chunks=len(docs),
+                    correction=bool(state.get("retry_response")),
                 )
             ],
         }
@@ -211,19 +320,28 @@ class AgentNodes:
             tool_calls=state.get("tool_calls"),
         )
         passed = len(issues) == 0
+        attempts = int(state.get("correction_attempts") or 0)
+        will_retry = (
+            not passed
+            and attempts < 1
+            and bool(docs)
+            and state.get("llm_available", True)
+        )
 
         final_answer = answer
-        if not passed and docs:
+        if not passed and docs and not will_retry:
             final_answer = (
                 f"{answer}\n\n"
                 f"[Validation note: {'; '.join(issues)}]"
             )
 
-        return {
+        result: dict[str, Any] = {
             "final_answer": final_answer,
             "validation_passed": passed,
             "validation_issues": issues,
+            "retry_response": will_retry,
             "current_node": "validate",
+            **update_node_status(state, "validate", "ok" if passed else "degraded"),
             "agent_events": [
                 make_event(
                     "validate",
@@ -231,9 +349,23 @@ class AgentNodes:
                     "Validation passed" if passed else "Validation flagged issues",
                     passed=passed,
                     issues=issues,
+                    will_retry=will_retry,
                 )
             ],
         }
+        if will_retry:
+            result.update(build_validation_correction(state))
+        elif not passed:
+            result.update(
+                record_handoff(
+                    state,
+                    from_node="validate",
+                    to_node="validate",
+                    summary="Validation failed; no further correction attempts.",
+                    issues=issues,
+                )
+            )
+        return result
 
     async def _decide_route(
         self,
@@ -369,6 +501,21 @@ def _build_response_messages(
     research_notes = state.get("research_notes")
     batch_summaries = state.get("batch_summaries") or []
     extra_parts = []
+
+    degraded = format_degraded_banner(state)
+    if degraded:
+        extra_parts.append(degraded)
+    handoffs = format_handoffs_for_prompt(state)
+    if handoffs:
+        extra_parts.append(handoffs)
+
+    if state.get("retry_response") or (state.get("validation_issues") and state.get("correction_attempts")):
+        issues = state.get("validation_issues") or []
+        extra_parts.append(
+            "Previous answer failed validation. Address these issues:\n"
+            + "\n".join(f"- {issue}" for issue in issues)
+        )
+
     if research_notes:
         extra_parts.append(f"Research notes:\n{research_notes}")
     if batch_summaries:
@@ -377,10 +524,10 @@ def _build_response_messages(
             for b in batch_summaries
         )
         extra_parts.append(f"Batch partial summaries:\n{partials}")
-    analysis_results = state.get("analysis_results")
+    analysis_results = sanitize_tool_output_for_prompt(state.get("analysis_results"))
     if analysis_results:
         extra_parts.append(f"Tool analysis results:\n{analysis_results}")
-    mcp_results = state.get("mcp_results")
+    mcp_results = sanitize_tool_output_for_prompt(state.get("mcp_results"))
     if mcp_results:
         extra_parts.append(f"MCP enterprise data:\n{mcp_results}")
     extra = f"\n\n{chr(10).join(extra_parts)}" if extra_parts else ""

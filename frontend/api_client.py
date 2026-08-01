@@ -25,6 +25,8 @@ class StreamResult:
     route: str | None = None
     validation_passed: bool | None = None
     model: str | None = None
+    degraded_mode: bool | None = None
+    butterfly_severity: str | None = None
     error: str | None = None
 
 
@@ -126,6 +128,8 @@ class AssistantApiClient:
                 result.route = msg.data.get("route")
                 result.validation_passed = msg.data.get("validation_passed")
                 result.model = msg.data.get("model")
+                result.degraded_mode = msg.data.get("degraded_mode")
+                result.butterfly_severity = msg.data.get("butterfly_severity")
             elif msg.event == "error":
                 result.error = msg.data.get("error", "Unknown error")
 

@@ -225,6 +225,7 @@ python scripts/test_security.py
 python scripts/test_streaming.py
 python scripts/test_session_memory.py
 python scripts/test_error_handling.py
+python scripts/test_multi_agent_collaboration.py
 ```
 
 ## Documentation
@@ -233,6 +234,17 @@ python scripts/test_error_handling.py
 |-----|-------------|
 | [docs/architecture.md](docs/architecture.md) | System diagram, agent graph, security, RLM |
 | [docs/memory-design.md](docs/memory-design.md) | Session memory design |
+| [docs/multi-agent-collaboration.md](docs/multi-agent-collaboration.md) | **Step S bonus:** shared state, handoffs, failure chains, butterfly effect |
+
+## Step S — Bonus features
+
+### Multi-agent collaboration
+
+Agents collaborate through shared **`AgentState`**: handoff notes, per-node status, failure chains, and butterfly-effect containment (retrieval escalation, tool circuit breaker, validation self-correction). See [docs/multi-agent-collaboration.md](docs/multi-agent-collaboration.md).
+
+```bash
+python scripts/test_multi_agent_collaboration.py
+```
 
 ## Assumptions & trade-offs
 

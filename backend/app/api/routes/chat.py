@@ -64,6 +64,7 @@ def _build_chat_response(
         for event in result.get("agent_events") or []
     ]
     settings = get_settings()
+    impact = result.get("butterfly_impact") or {}
     return ChatResponse(
         answer=result.get("final_answer") or "",
         session_id=session_id,
@@ -76,6 +77,10 @@ def _build_chat_response(
         agent_events=agent_events,
         history_turns=result.get("history_turns", 0),
         user_role=user_role,
+        degraded_mode=result.get("degraded_mode"),
+        failure_count=len(result.get("failure_chain") or []),
+        handoff_count=len(result.get("handoff_notes") or []),
+        butterfly_severity=impact.get("severity"),
     )
 
 

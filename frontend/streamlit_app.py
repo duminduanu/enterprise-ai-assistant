@@ -32,6 +32,7 @@ NODE_COLORS = {
     "tools": "#ea580c",
     "response": "#0891b2",
     "validate": "#64748b",
+    "collaboration": "#7c3aed",
     "system": "#dc2626",
 }
 
@@ -99,12 +100,16 @@ def _render_activity_panel(
     current_node: str | None,
     current_route: str | None,
     validation_passed: bool | None,
+    degraded_mode: bool | None = None,
+    butterfly_severity: str | None = None,
 ) -> None:
     st.subheader("Agent Activity")
     if current_node:
         st.caption(f"Current node: **{current_node}**")
     if current_route:
         st.caption(f"Route: **{current_route}**")
+    if degraded_mode:
+        st.caption(f"Mode: **degraded** ({butterfly_severity or 'unknown'} severity)")
     if validation_passed is not None:
         icon = "✅" if validation_passed else "⚠️"
         st.caption(f"Validation: {icon} {'passed' if validation_passed else 'flagged'}")
@@ -256,6 +261,8 @@ def main() -> None:
 
             answer_parts: list[str] = []
             validation_passed: bool | None = None
+            degraded_mode: bool | None = None
+            butterfly_severity: str | None = None
             citations: list[dict[str, Any]] = []
             stream_error: str | None = None
 
@@ -269,16 +276,20 @@ def main() -> None:
                             current_node=st.session_state.current_node,
                             current_route=st.session_state.current_route,
                             validation_passed=validation_passed,
+                            degraded_mode=degraded_mode,
+                            butterfly_severity=butterfly_severity,
                         )
 
                 def on_event(msg: SSEMessage) -> None:
-                    nonlocal validation_passed
+                    nonlocal validation_passed, degraded_mode, butterfly_severity
                     _handle_sse_event(msg, activity_log)
                     if msg.event == "token":
                         answer_parts.append(msg.data.get("content", ""))
                         answer_placeholder.markdown("".join(answer_parts))
                     elif msg.event == "done":
                         validation_passed = msg.data.get("validation_passed")
+                        degraded_mode = msg.data.get("degraded_mode")
+                        butterfly_severity = msg.data.get("butterfly_severity")
                     refresh_activity()
 
                 refresh_activity()
@@ -296,6 +307,8 @@ def main() -> None:
                         answer_parts = [result.answer]
                     citations = result.citations
                     validation_passed = result.validation_passed
+                    degraded_mode = result.degraded_mode
+                    butterfly_severity = result.butterfly_severity
                     if result.session_id:
                         st.session_state.session_id = result.session_id
                     if result.route:

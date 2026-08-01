@@ -6,6 +6,7 @@ from functools import lru_cache
 
 from langgraph.graph import END, START, StateGraph
 
+from backend.app.agents.collaboration import route_after_retrieval, route_after_validate
 from backend.app.agents.nodes import AgentNodes
 from backend.app.agents.state import AgentState
 from backend.app.retrieval import HybridRetriever
@@ -16,7 +17,14 @@ def route_after_supervisor(state: AgentState) -> str:
 
 
 def build_agent_graph(retriever: HybridRetriever):
-    """Compile supervisor -> retrieval|research -> tools -> response -> validate graph."""
+    """
+    Compile multi-agent graph with failure-aware collaboration routing.
+
+    Linear spine: supervisor → retrieval|research → tools → response → validate
+    Conditional collaboration edges:
+    - retrieval → research (escalation) | tools
+    - validate → response (self-correction) | END
+    """
     nodes = AgentNodes(retriever)
 
     graph = StateGraph(AgentState)
@@ -36,11 +44,25 @@ def build_agent_graph(retriever: HybridRetriever):
             "research": "research",
         },
     )
-    graph.add_edge("retrieval", "tools")
+    graph.add_conditional_edges(
+        "retrieval",
+        route_after_retrieval,
+        {
+            "research": "research",
+            "tools": "tools",
+        },
+    )
     graph.add_edge("research", "tools")
     graph.add_edge("tools", "response")
     graph.add_edge("response", "validate")
-    graph.add_edge("validate", END)
+    graph.add_conditional_edges(
+        "validate",
+        route_after_validate,
+        {
+            "response": "response",
+            "__end__": END,
+        },
+    )
 
     return graph.compile()
 

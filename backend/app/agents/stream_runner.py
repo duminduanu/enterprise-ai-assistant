@@ -10,6 +10,7 @@ from typing import Any
 from langchain_core.messages import AIMessage, HumanMessage
 from langsmith import traceable
 
+from backend.app.agents.collaboration import initial_collaboration_state
 from backend.app.agents.events import make_event
 from backend.app.agents.graph import get_compiled_agent_graph
 from backend.app.core.config import get_settings
@@ -35,9 +36,18 @@ def _history_to_messages(history: list[dict[str, str]]) -> list[HumanMessage | A
 
 def _merge_state(accumulated: dict[str, Any], update: dict[str, Any]) -> dict[str, Any]:
     merged = dict(accumulated)
+    append_keys = {
+        "agent_events",
+        "tool_calls",
+        "failure_chain",
+        "handoff_notes",
+        "degraded_reasons",
+    }
     for key, value in update.items():
-        if key in {"agent_events", "tool_calls"} and isinstance(value, list):
+        if key in append_keys and isinstance(value, list):
             merged[key] = list(merged.get(key) or []) + value
+        elif key == "node_status" and isinstance(value, dict):
+            merged[key] = {**(merged.get(key) or {}), **value}
         else:
             merged[key] = value
     return merged
@@ -80,6 +90,7 @@ async def stream_agent(
         "agent_events": [],
         "validation_issues": [],
         "stream_tokens": True,
+        **initial_collaboration_state(),
     }
 
     config = build_run_config(

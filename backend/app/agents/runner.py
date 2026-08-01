@@ -8,6 +8,7 @@ from typing import Any
 from langchain_core.messages import AIMessage, HumanMessage
 from langsmith import traceable
 
+from backend.app.agents.collaboration import initial_collaboration_state
 from backend.app.agents.events import make_event
 from backend.app.agents.graph import get_compiled_agent_graph
 from backend.app.core.async_utils import run_agent_with_timeout
@@ -68,6 +69,7 @@ async def run_agent(
         "tool_calls": [],
         "agent_events": [],
         "validation_issues": [],
+        **initial_collaboration_state(),
     }
 
     config = build_run_config(
