@@ -15,7 +15,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from backend.app.api.router import api_router
 from backend.app.api.schemas import ErrorResponse
 from backend.app.core.config import get_settings
-from backend.app.core.exceptions import AppError
+from backend.app.core.exceptions import AppError, RateLimitError
 from backend.app.core.logging import setup_logging
 from backend.app.observability.langsmith_config import configure_langsmith
 
@@ -94,12 +94,16 @@ def register_exception_handlers(app: FastAPI) -> None:
             exc.status_code,
             exc.message,
         )
+        headers: dict[str, str] = {}
+        if isinstance(exc, RateLimitError):
+            headers["Retry-After"] = str(exc.retry_after)
         return JSONResponse(
             status_code=exc.status_code,
             content=ErrorResponse(
                 error=exc.message,
                 request_id=request_id,
             ).model_dump(),
+            headers=headers,
         )
 
     @app.exception_handler(RequestValidationError)

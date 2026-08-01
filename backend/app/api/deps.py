@@ -13,7 +13,10 @@ from backend.app.core.exceptions import UnauthorizedError
 from backend.app.retrieval import HybridRetriever
 from backend.app.security.jwt import safe_decode_access_token
 from backend.app.security.models import CurrentUser
+from backend.app.security.rate_limit import TokenBucketRateLimiter
 from backend.app.security.rbac import normalize_role
+
+_rate_limiter: TokenBucketRateLimiter | None = None
 
 
 @lru_cache(maxsize=1)
@@ -73,3 +76,22 @@ async def get_current_user(
 
 
 CurrentUserDep = Annotated[CurrentUser, Depends(get_current_user)]
+
+
+def get_rate_limiter(settings: SettingsDep) -> TokenBucketRateLimiter:
+    global _rate_limiter
+    if _rate_limiter is None:
+        _rate_limiter = TokenBucketRateLimiter(settings.rate_limit_requests_per_minute)
+    return _rate_limiter
+
+
+async def enforce_rate_limit(
+    current_user: CurrentUserDep,
+    settings: SettingsDep,
+) -> None:
+    limiter = get_rate_limiter(settings)
+    key = current_user.user_id or current_user.email or "anonymous"
+    await limiter.acquire(key)
+
+
+RateLimitDep = Annotated[None, Depends(enforce_rate_limit)]

@@ -9,7 +9,7 @@ from fastapi import APIRouter, Request
 from langsmith import traceable
 
 from backend.app.agents.runner import docs_to_hits, run_agent
-from backend.app.api.deps import CurrentUserDep, RetrieverDep
+from backend.app.api.deps import CurrentUserDep, RateLimitDep, RetrieverDep
 from backend.app.api.schemas import (
     AgentEvent,
     ChatRequest,
@@ -22,6 +22,7 @@ from backend.app.core.config import get_settings
 from backend.app.core.exceptions import RetrievalError, ValidationError
 from backend.app.retrieval import HybridRetriever
 from backend.app.retrieval.schemas import RetrievalFilters, RetrievalHit
+from backend.app.security.prompt_injection import check_user_input
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["chat"])
@@ -32,6 +33,7 @@ async def chat(
     request: Request,
     body: ChatRequest,
     current_user: CurrentUserDep,
+    _rate_limit: RateLimitDep,
 ) -> ChatResponse:
     """Multi-agent chat via LangGraph: supervisor -> retrieval|research -> response -> validate."""
     request_id = getattr(request.state, "request_id", "unknown")
@@ -40,6 +42,10 @@ async def chat(
 
     if not body.message.strip():
         raise ValidationError("Message cannot be empty")
+
+    is_safe, violations = check_user_input(body.message)
+    if not is_safe:
+        raise ValidationError(f"Message blocked by security policy: {violations[0]}")
 
     try:
         result = await run_agent(
@@ -98,8 +104,13 @@ async def search(
     body: SearchRequest,
     retriever: RetrieverDep,
     current_user: CurrentUserDep,
+    _rate_limit: RateLimitDep,
 ) -> SearchResponse:
     """Direct hybrid search endpoint for debugging and tooling."""
+    is_safe, violations = check_user_input(body.query)
+    if not is_safe:
+        raise ValidationError(f"Query blocked by security policy: {violations[0]}")
+
     request_id = getattr(request.state, "request_id", None)
     filters = RetrievalFilters(
         department=body.department,

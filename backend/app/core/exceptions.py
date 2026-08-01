@@ -35,3 +35,9 @@ class UnauthorizedError(AppError):
 class ForbiddenError(AppError):
     def __init__(self, message: str = "Insufficient permissions") -> None:
         super().__init__(message, status_code=403)
+
+
+class RateLimitError(AppError):
+    def __init__(self, message: str, *, retry_after: int = 60) -> None:
+        super().__init__(message, status_code=429)
+        self.retry_after = retry_after

@@ -16,6 +16,8 @@ from backend.app.agents.rlm import run_rlm_pipeline
 from backend.app.agents.state import AgentState, Route
 from backend.app.llm.provider import get_chat_llm
 from backend.app.memory.session_store import contextualize_question, format_history_for_prompt
+from backend.app.security.guardrails import validate_answer_guardrails
+from backend.app.security.prompt_injection import wrap_untrusted_document
 from backend.app.security.rbac import can_use_research_route
 from backend.app.observability.langsmith_config import build_run_config
 from backend.app.retrieval import HybridRetriever
@@ -173,7 +175,12 @@ class AgentNodes:
     async def validate(self, state: AgentState) -> dict[str, Any]:
         answer = state.get("final_answer") or ""
         docs = state.get("retrieved_docs") or []
-        issues = _validate_answer(answer, docs)
+        issues = validate_answer_guardrails(
+            answer,
+            docs,
+            user_role=state.get("user_role", "viewer"),
+            tool_calls=state.get("tool_calls"),
+        )
         passed = len(issues) == 0
 
         final_answer = answer
@@ -350,10 +357,11 @@ def _format_context(docs: list[dict[str, Any]]) -> str:
         return "No relevant documents found."
     blocks = []
     for i, doc in enumerate(docs, start=1):
-        blocks.append(
-            f"[Document {i}] source={doc.get('source_file')} "
-            f"title={doc.get('title')}\n{doc.get('text') or doc.get('text_preview', '')}"
-        )
+        source = doc.get("source_file", "unknown")
+        title = doc.get("title", "")
+        body = doc.get("text") or doc.get("text_preview", "")
+        wrapped = wrap_untrusted_document(body, source_file=source, title=title)
+        blocks.append(f"[Document {i}]\n{wrapped}")
     return "\n\n".join(blocks)
 
 
@@ -374,24 +382,3 @@ def _fallback_answer(question: str, docs: list[dict[str, Any]]) -> str:
         )
     lines.append(f"\nQuestion received: {question}")
     return "\n".join(lines)
-
-
-def _validate_answer(answer: str, docs: list[dict[str, Any]]) -> list[str]:
-    issues: list[str] = []
-    lowered = answer.lower()
-
-    if not docs and "do not have enough information" not in lowered:
-        issues.append("No retrieved documents but answer did not admit insufficient context")
-
-    if docs:
-        cited_any = any(
-            doc.get("source_file", "") in answer for doc in docs if doc.get("source_file")
-        )
-        if not cited_any and "retrieval-only response" not in lowered:
-            issues.append("Answer missing inline source citations")
-
-    injection_markers = ("ignore previous instructions", "system prompt", "you are now")
-    if any(marker in lowered for marker in injection_markers):
-        issues.append("Potential prompt-injection phrasing detected in output")
-
-    return issues

@@ -39,6 +39,8 @@ class Settings(BaseSettings):
 
     session_memory_max_turns: int = 10
 
+    rate_limit_requests_per_minute: int = 20
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

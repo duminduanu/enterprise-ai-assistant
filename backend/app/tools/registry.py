@@ -12,6 +12,7 @@ from langgraph.prebuilt import ToolNode
 
 from backend.app.retrieval import HybridRetriever
 from backend.app.security.rbac import can_use_tool
+from backend.app.security.tool_validation import validate_tool_call
 from backend.app.tools.knowledge_search import create_knowledge_search_tool
 from backend.app.tools.mcp_tools import create_mcp_tools
 from backend.app.tools.python_analysis import create_python_analysis_tool
@@ -207,6 +208,17 @@ async def run_tool_node(
             )
             continue
         args = dict(call["args"])
+        ok, err = validate_tool_call(call["name"], args)
+        if not ok:
+            events.append(
+                make_event(
+                    "tools",
+                    "tool_invalid",
+                    f"Rejected {call['name']}: {err}",
+                    tool=call["name"],
+                )
+            )
+            continue
         if call["name"] == "knowledge_search" and inject_user_role:
             args.setdefault("user_role", state.get("user_role", "viewer"))
         tool_calls_payload.append(
