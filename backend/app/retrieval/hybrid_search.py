@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import Any
+
+from langsmith import traceable
 
 from backend.app.retrieval.config import (
     ROLE_ACCESS_LEVELS,
@@ -26,6 +27,7 @@ class HybridRetriever:
         self._dense = DenseSearch(self.settings)
         self._sparse = SparseSearch(self.settings)
 
+    @traceable(name="hybrid_retrieval", run_type="retriever")
     def search(
         self,
         query: str,
@@ -72,8 +74,7 @@ class HybridRetriever:
         alpha: float | None = None,
     ) -> list[RetrievalHit]:
         """Async wrapper for use in FastAPI / LangGraph nodes."""
-        return await asyncio.to_thread(
-            self.search,
+        return self.search(
             query,
             user_role=user_role,
             top_k=top_k,

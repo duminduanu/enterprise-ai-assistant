@@ -17,6 +17,7 @@ from backend.app.api.schemas import ErrorResponse
 from backend.app.core.config import get_settings
 from backend.app.core.exceptions import AppError
 from backend.app.core.logging import setup_logging
+from backend.app.observability.langsmith_config import configure_langsmith
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,12 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     settings = get_settings()
     setup_logging(settings.log_level)
-    logger.info("Starting enterprise-ai-assistant env=%s", settings.app_env)
+    tracing_on = configure_langsmith(settings)
+    logger.info(
+        "Starting enterprise-ai-assistant env=%s langsmith=%s",
+        settings.app_env,
+        "enabled" if tracing_on else "disabled",
+    )
     yield
     logger.info("Shutting down enterprise-ai-assistant")
 

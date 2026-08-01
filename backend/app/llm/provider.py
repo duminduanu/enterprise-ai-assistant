@@ -12,6 +12,7 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings
+from langsmith import traceable
 
 ProviderName = Literal["gemini"]
 
@@ -132,6 +133,7 @@ def embed_texts(
     raise RuntimeError("Failed to embed texts after retries")
 
 
+@traceable(name="embed_query", run_type="embedding")
 def embed_query(query: str) -> list[float]:
     """Embed a single search query."""
     settings = load_provider_settings()
