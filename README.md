@@ -73,10 +73,20 @@ enterprise-ai-assistant/
    python scripts/ingest_documents.py
    ```
 
-5. Run backend and frontend (coming in later steps):
+5. Run the API server:
 
    ```bash
-   uvicorn backend.app.main:app --reload
+   uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000
+   ```
+
+   Test endpoints:
+   - `GET http://localhost:8000/health`
+   - `POST http://localhost:8000/api/v1/chat` — body: `{"message": "What is the password reset policy?"}`
+   - `POST http://localhost:8000/api/v1/search` — body: `{"query": "payment failure outage"}`
+
+6. Run frontend (coming in later steps):
+
+   ```bash
    streamlit run frontend/streamlit_app.py
    ```
 
