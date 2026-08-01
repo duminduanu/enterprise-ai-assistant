@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ingest markdown documents into Pinecone with embeddings and metadata."""
+"""Ingest markdown documents into Pinecone with Gemini embeddings and metadata."""
 
 from __future__ import annotations
 
@@ -12,12 +12,12 @@ import time
 from pathlib import Path
 
 from dotenv import load_dotenv
-from openai import OpenAI
 from pinecone import Pinecone
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+from backend.app.llm.provider import embed_texts, load_provider_settings  # noqa: E402
 from backend.app.retrieval.document_loader import load_documents  # noqa: E402
 
 logging.basicConfig(
@@ -33,52 +33,30 @@ CHUNKS_MANIFEST_PATH = PROCESSED_DIR / "chunks_manifest.json"
 
 
 def load_settings() -> dict:
-    load_dotenv(ROOT / ".env")
+    env_path = ROOT / ".env"
+    load_dotenv(env_path, override=True)
+    provider = load_provider_settings(str(env_path))
     return {
-        "openai_api_key": os.getenv("OPENAI_API_KEY", ""),
         "pinecone_api_key": os.getenv("PINECONE_API_KEY", ""),
-        "pinecone_index_name": os.getenv("PINECONE_INDEX_NAME", "enterprise-ai-assistant"),
-        "embedding_model": os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"),
-        "embedding_dimension": int(os.getenv("EMBEDDING_DIMENSION", "1536")),
-        "batch_size": int(os.getenv("INGEST_BATCH_SIZE", "20")),
+        "pinecone_index_name": os.getenv(
+            "PINECONE_INDEX_NAME", "enterprise-ai-assistant-gemini"
+        ),
+        "embedding_model": provider.embedding_model,
+        "embedding_dimension": provider.embedding_dimension,
+        "batch_size": int(os.getenv("INGEST_BATCH_SIZE", "5")),
+        "ingest_delay_seconds": float(os.getenv("INGEST_DELAY_SECONDS", "1.5")),
+        "llm_provider": provider.llm_provider,
     }
 
 
 def validate_settings(settings: dict) -> None:
     missing = []
-    if not settings["openai_api_key"]:
-        missing.append("OPENAI_API_KEY")
     if not settings["pinecone_api_key"]:
         missing.append("PINECONE_API_KEY")
     if not settings["pinecone_index_name"]:
         missing.append("PINECONE_INDEX_NAME")
     if missing:
         raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
-
-
-def embed_texts(
-    client: OpenAI,
-    model: str,
-    texts: list[str],
-    max_retries: int = 5,
-) -> list[list[float]]:
-    for attempt in range(max_retries):
-        try:
-            response = client.embeddings.create(input=texts, model=model)
-            return [item.embedding for item in response.data]
-        except Exception as exc:
-            err = str(exc)
-            if "insufficient_quota" in err:
-                raise RuntimeError(
-                    "OpenAI API quota exceeded. Add billing/credits at "
-                    "https://platform.openai.com/account/billing then re-run ingestion."
-                ) from exc
-            if attempt == max_retries - 1:
-                raise
-            wait = 2 ** attempt
-            logger.warning("Embedding retry %d/%d after error: %s", attempt + 1, max_retries, exc)
-            time.sleep(wait)
-    raise RuntimeError("Failed to embed texts after retries")
 
 
 def upsert_batch(
@@ -111,7 +89,7 @@ def save_bm25_corpus(chunks) -> None:
     logger.info("Saved BM25 corpus (%d chunks) to %s", len(corpus), BM25_CORPUS_PATH)
 
 
-def save_manifest(chunks, index_stats: dict) -> None:
+def save_manifest(chunks, index_stats: dict, settings: dict) -> None:
     PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
     by_namespace: dict[str, int] = {}
     for chunk in chunks:
@@ -120,6 +98,9 @@ def save_manifest(chunks, index_stats: dict) -> None:
     manifest = {
         "total_chunks": len(chunks),
         "chunks_by_namespace": by_namespace,
+        "embedding_provider": settings["llm_provider"],
+        "embedding_model": settings["embedding_model"],
+        "embedding_dimension": settings["embedding_dimension"],
         "pinecone_index_stats": index_stats,
         "ingested_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
@@ -134,6 +115,11 @@ def ingest(dry_run: bool = False) -> None:
     if not DOCS_ROOT.exists():
         raise FileNotFoundError(f"Documents directory not found: {DOCS_ROOT}")
 
+    logger.info(
+        "Using Gemini embeddings: %s (dim=%d)",
+        settings["embedding_model"],
+        settings["embedding_dimension"],
+    )
     logger.info("Loading documents from %s", DOCS_ROOT)
     chunks = load_documents(DOCS_ROOT)
     logger.info("Loaded %d chunks from markdown files", len(chunks))
@@ -150,11 +136,9 @@ def ingest(dry_run: bool = False) -> None:
         logger.info("Dry run — would upsert %d chunks: %s", len(chunks), by_ns)
         return
 
-    openai_client = OpenAI(api_key=settings["openai_api_key"])
     pc = Pinecone(api_key=settings["pinecone_api_key"])
     index = pc.Index(settings["pinecone_index_name"])
 
-    # Group by namespace for upsert
     by_namespace: dict[str, list] = {}
     for chunk in chunks:
         by_namespace.setdefault(chunk.namespace, []).append(chunk)
@@ -167,18 +151,7 @@ def ingest(dry_run: bool = False) -> None:
         for i in range(0, len(ns_chunks), batch_size):
             batch = ns_chunks[i : i + batch_size]
             texts = [c.text for c in batch]
-            embeddings = embed_texts(
-                openai_client,
-                settings["embedding_model"],
-                texts,
-            )
-
-            if len(embeddings[0]) != settings["embedding_dimension"]:
-                raise ValueError(
-                    f"Embedding dimension mismatch: got {len(embeddings[0])}, "
-                    f"expected {settings['embedding_dimension']}. "
-                    "Check EMBEDDING_MODEL / Pinecone index dimension."
-                )
+            embeddings = embed_texts(texts)
 
             upsert_batch(
                 index,
@@ -189,10 +162,14 @@ def ingest(dry_run: bool = False) -> None:
             )
             total_upserted += len(batch)
             logger.info("  Upserted batch %d–%d", i + 1, i + len(batch))
-            time.sleep(0.2)  # gentle rate limit
+            time.sleep(settings["ingest_delay_seconds"])
 
     stats = index.describe_index_stats()
-    save_manifest(chunks, stats.to_dict() if hasattr(stats, "to_dict") else dict(stats))
+    save_manifest(
+        chunks,
+        stats.to_dict() if hasattr(stats, "to_dict") else dict(stats),
+        settings,
+    )
 
     logger.info("Ingestion complete — %d vectors upserted", total_upserted)
     logger.info("Pinecone index stats: %s", stats)
