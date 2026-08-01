@@ -2,9 +2,9 @@
 
 Enterprise-grade AI assistant for **Commercial Bank** internal knowledge — policies, runbooks, incident reports, architecture docs, and product specifications.
 
-Built for the AI Tech Lead assessment: LangGraph multi-agent orchestration, hybrid RAG, observability, security controls, and production-ready async patterns.
+Built for the AI Tech Lead assessment: **LangGraph multi-agent orchestration**, **hybrid RAG**, **LangSmith observability**, **RBAC security**, **SSE streaming**, and a **Streamlit** UI with a live agent activity panel.
 
-## Architecture (planned)
+## Architecture
 
 ```
 Streamlit UI → FastAPI (async) → LangGraph agents → Tools / Pinecone / MCP
@@ -12,133 +12,254 @@ Streamlit UI → FastAPI (async) → LangGraph agents → Tools / Pinecone / MCP
                                  LangSmith traces
 ```
 
-**Agents:** Supervisor → Retrieval → Research (RLM) → Response → Validation
+**Agent pipeline:** Supervisor → Retrieval | Research (RLM) → Tools → Response → Validate
+
+Full diagram and design notes: **[docs/architecture.md](docs/architecture.md)**
 
 ## Tech stack
 
 | Layer | Technology |
 |-------|------------|
-| Frontend | Streamlit |
+| Frontend | Streamlit (chat + agent activity panel) |
 | Backend | FastAPI (async) |
 | Orchestration | LangGraph |
-| Vector DB | Pinecone (hybrid: dense + BM25) |
+| Vector DB | Pinecone (dense) + in-process BM25 (sparse) |
 | Observability | LangSmith |
 | LLM | Google Gemini (`gemini-2.0-flash`) |
 | Embeddings | Google Gemini (`gemini-embedding-001`, 768 dims) |
+| MCP | In-process enterprise data server |
 
 ## Project structure
 
 ```
 enterprise-ai-assistant/
-├── backend/           # FastAPI + LangGraph + retrieval + security
-│   └── app/llm/       # Gemini LLM + embedding provider factory
-├── frontend/          # Streamlit chat UI + agent activity panel
+├── backend/app/       # FastAPI, agents, retrieval, security, tools
+├── frontend/          # Streamlit UI + SSE API client
 ├── mcp_server/        # MCP server with dummy enterprise data
-├── scripts/           # Ingestion and data generation
-├── data/              # Mock documents
-└── docs/              # Architecture and design docs
+├── scripts/           # Ingestion, mock data, integration tests
+├── data/              # Mock documents + processed BM25 corpus
+└── docs/              # Architecture & memory design
 ```
 
 ## Prerequisites
 
 - Python 3.11+
 - [Google AI Studio](https://aistudio.google.com/apikey) API key (Gemini)
-- Pinecone account + index (`enterprise-ai-assistant-gemini`, **dimension 768**)
-- LangSmith project
+- [Pinecone](https://www.pinecone.io/) account + serverless index (**768 dimensions**, cosine)
+- [LangSmith](https://smith.langchain.com/) project (optional but recommended for demo)
 
 ## Setup
 
-1. Clone the repository and create a virtual environment:
+### 1. Clone and install
 
-   ```bash
-   python -m venv .venv
-   .venv\Scripts\activate        # Windows
-   pip install -r backend/requirements.txt
-   ```
+```bash
+git clone <your-repo-url>
+cd enterprise-ai-assistant
+python -m venv .venv
+.venv\Scripts\activate          # Windows
+# source .venv/bin/activate     # macOS/Linux
+pip install -r backend/requirements.txt
+```
 
-2. Copy environment template and fill in values:
+### 2. Configure environment
 
-   ```bash
-   copy .env.example .env
-   ```
+```bash
+copy .env.example .env          # Windows
+# cp .env.example .env          # macOS/Linux
+```
 
-3. Create a Pinecone **serverless** index named `enterprise-ai-assistant-gemini` with:
-   - **Dimension:** 768
-   - **Metric:** cosine
+Fill in at minimum:
 
-4. Generate mock documents and ingest:
+| Variable | Required |
+|----------|----------|
+| `GOOGLE_API_KEY` | Yes — LLM + embeddings |
+| `PINECONE_API_KEY` | Yes — dense retrieval |
+| `PINECONE_INDEX_NAME` | Yes — default `enterprise-ai-assistant-gemini` |
+| `JWT_SECRET` | Yes for auth |
+| `LANGSMITH_API_KEY` | Recommended for tracing demo |
 
-   ```bash
-   python scripts/generate_mock_data.py
-   python scripts/ingest_documents.py
-   ```
+See [`.env.example`](.env.example) for the full list.
 
-5. Run the API server:
+### 3. Create Pinecone index
 
-   ```bash
-   uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000
-   ```
+Create a **serverless** index:
 
-   Test endpoints:
-   - `GET http://localhost:8000/health`
-   - `POST http://localhost:8000/api/v1/chat` — body: `{"message": "What is the password reset policy?"}`
-   - `POST http://localhost:8000/api/v1/search` — body: `{"query": "payment failure outage"}`
+- **Name:** `enterprise-ai-assistant-gemini`
+- **Dimensions:** 768
+- **Metric:** cosine
 
-6. Run frontend (coming in later steps):
+### 4. Generate and ingest documents
 
-   ```bash
-   streamlit run frontend/streamlit_app.py
-   ```
+```bash
+python scripts/generate_mock_data.py
+python scripts/ingest_documents.py
+```
+
+This creates ~41 mock Commercial Bank markdown docs and upserts ~355 vectors to Pinecone plus a BM25 corpus at `data/processed/bm25_corpus.json`.
+
+### 5. Run the backend
+
+```bash
+uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+> **Windows note:** If port 8000 fails with `[WinError 10013]`, Windows may have reserved that port (Hyper-V/WSL). Use `--port 8080` and set `API_BASE_URL=http://127.0.0.1:8080` in `.env` and the Streamlit sidebar.
+
+Verify:
+
+```bash
+curl http://127.0.0.1:8000/health
+```
+
+### 6. Run the Streamlit UI
+
+```bash
+streamlit run frontend/streamlit_app.py
+```
+
+Open the URL shown (default `http://localhost:8501`). Sign in with a demo account (below) or use dev mode (viewer role via header when `AUTH_REQUIRED=false`).
+
+## Demo users
+
+| Email | Password | Role |
+|-------|----------|------|
+| `viewer@commercialbank.com` | `viewer123` | viewer |
+| `analyst@commercialbank.com` | `analyst123` | analyst |
+| `admin@commercialbank.com` | `admin123` | admin |
+
+## API endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/health` | Service health + dependency status |
+| POST | `/api/v1/auth/login` | JWT login |
+| GET | `/api/v1/auth/me` | Current user profile |
+| POST | `/api/v1/chat` | Multi-agent chat (JSON response) |
+| POST | `/api/v1/chat/stream` | SSE stream (tokens + agent events) |
+| POST | `/api/v1/search` | Direct hybrid search (debug) |
+
+### Example: chat
+
+```bash
+curl -X POST http://127.0.0.1:8000/api/v1/chat \
+  -H "Content-Type: application/json" \
+  -H "X-User-Role: viewer" \
+  -d "{\"message\": \"What is the password reset policy?\"}"
+```
+
+### Example: login + restricted search (admin)
+
+```bash
+TOKEN=$(curl -s -X POST http://127.0.0.1:8000/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"admin@commercialbank.com","password":"admin123"}' \
+  | python -c "import sys,json; print(json.load(sys.stdin)['access_token'])")
+
+curl -X POST http://127.0.0.1:8000/api/v1/search \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"query": "restricted fraud investigation"}'
+```
 
 ## Environment variables
 
-See [`.env.example`](.env.example) for all required configuration.
-
-Key variables:
-
-| Variable | Purpose |
-|----------|---------|
-| `GOOGLE_API_KEY` | Gemini LLM + embeddings |
-| `LLM_MODEL` | Chat model (default: `gemini-2.0-flash`) |
-| `EMBEDDING_MODEL` | Embedding model (default: `gemini-embedding-001`) |
-| `EMBEDDING_DIMENSION` | Must match Pinecone index (768) |
-| `PINECONE_INDEX_NAME` | Pinecone index for dense vectors |
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `GOOGLE_API_KEY` | — | Gemini LLM + embeddings |
+| `LLM_MODEL` | `gemini-2.0-flash` | Chat model |
+| `EMBEDDING_MODEL` | `gemini-embedding-001` | Embedding model |
+| `EMBEDDING_DIMENSION` | `768` | Must match Pinecone index |
+| `PINECONE_API_KEY` | — | Pinecone API key |
+| `PINECONE_INDEX_NAME` | `enterprise-ai-assistant-gemini` | Index name |
+| `HYBRID_ALPHA` | `0.7` | Dense vs sparse weight (1.0 = dense only) |
+| `RETRIEVAL_TOP_K` | `5` | Results returned to agent |
+| `LANGSMITH_TRACING` | `true` | Enable LangSmith traces |
+| `LANGSMITH_PROJECT` | `enterprise-ai-assistant` | LangSmith project name |
+| `JWT_SECRET` | — | JWT signing secret |
+| `AUTH_REQUIRED` | `false` | Require Bearer token (dev: use `X-User-Role`) |
+| `RATE_LIMIT_REQUESTS_PER_MINUTE` | `20` | Per-user token bucket |
+| `SESSION_MEMORY_MAX_TURNS` | `10` | Conversation pairs per session |
+| `AGENT_TIMEOUT_SECONDS` | `120` | Max agent run duration |
+| `API_BASE_URL` | `http://127.0.0.1:8000` | Streamlit → backend URL |
 
 ## Model selection rationale
 
 **Google Gemini** was chosen for this POC because:
 
-- **Free tier** available via Google AI Studio (no paid OpenAI credits required)
-- **Single provider** for both LLM and embeddings simplifies integration
-- **`gemini-2.0-flash`** offers strong speed/quality balance for multi-agent orchestration
-- **`gemini-embedding-001`** provides 768-dimensional vectors (matches Pinecone index)
+- **Free tier** via Google AI Studio (no paid OpenAI credits required)
+- **Single provider** for LLM and embeddings
+- **`gemini-2.0-flash`** — strong speed/quality for multi-agent orchestration
+- **`gemini-embedding-001`** — 768-dim vectors matching Pinecone index
 
 **Trade-offs:**
 
-- Pinecone index must use **768 dimensions** (not OpenAI's 1536)
-- Free tier rate limits apply — ingestion uses batched requests with backoff
-- Production would evaluate multi-provider fallback and paid tier SLAs
+- Pinecone index must be **768 dimensions** (not OpenAI's 1536)
+- Free tier rate limits apply; ingestion uses batched embeds with backoff
+- When LLM quota is exhausted, chat degrades to **retrieval-only fallback**
+- Production would add multi-provider fallback and paid-tier SLAs
 
-Provider configuration is centralized in `backend/app/llm/provider.py`.
+Provider factory: `backend/app/llm/provider.py`
 
 ## Security
 
-- RBAC: Viewer, Analyst, Administrator roles
-- Prompt injection protection and input validation
-- Rate limiting (token bucket per user)
-- Document access filtered by role and metadata
+| Control | Implementation |
+|---------|----------------|
+| **RBAC** | viewer / analyst / admin — tools, research route, restricted docs |
+| **JWT auth** | `POST /api/v1/auth/login` with hardcoded demo users |
+| **Prompt injection** | Input blocklist on chat + search; untrusted doc wrapping in prompts |
+| **Rate limiting** | Token bucket per user (`RATE_LIMIT_REQUESTS_PER_MINUTE`) |
+| **Guardrails** | Validate node: citation check, brand safety, tool audit |
+| **Tool validation** | Pydantic schemas before tool execution |
+
+Details: [docs/architecture.md#security-architecture](docs/architecture.md#security-architecture)
+
+## Testing
+
+Integration test scripts (run from project root with venv active):
+
+```bash
+python scripts/test_retrieval.py
+python scripts/test_agent.py "Summarize payment outage reports"
+python scripts/test_rbac.py
+python scripts/test_security.py
+python scripts/test_streaming.py
+python scripts/test_session_memory.py
+python scripts/test_error_handling.py
+```
 
 ## Documentation
 
-- Architecture diagram: `docs/architecture.md` (coming soon)
-- Memory design: `docs/memory-design.md` (coming soon)
+| Doc | Description |
+|-----|-------------|
+| [docs/architecture.md](docs/architecture.md) | System diagram, agent graph, security, RLM |
+| [docs/memory-design.md](docs/memory-design.md) | Session memory design |
 
 ## Assumptions & trade-offs
 
-- Company context: Commercial Bank (mock data, no real PII)
-- Auth: hardcoded users (Option A) for POC speed
-- Hybrid search: Pinecone dense (Gemini embeddings) + in-process BM25
-- RLM: simplified batch decomposition (not full Python plan execution)
+| Decision | POC choice | Production alternative |
+|----------|------------|------------------------|
+| Company context | Commercial Bank mock data, no real PII | Real CMDB + doc connectors |
+| Auth | Hardcoded users + JWT | SSO / OIDC |
+| Hybrid search | Pinecone dense + in-process BM25 | OpenSearch hybrid |
+| RLM | LLM-planned batches with heuristic fallback | Full recursive plan execution |
+| Memory | In-process per session | Redis / Postgres |
+| MCP | In-process client | Sidecar MCP over stdio/SSE |
+| Streaming | SSE from `/chat/stream` | WebSocket + CDN |
+
+## Demo video
+
+<!-- Add your public demo URL here after recording -->
+**Demo video:** _[Link to 45-min walkthrough — architecture, code, live demo, LangSmith traces]_
+
+Suggested demo flow:
+
+1. Architecture overview (`docs/architecture.md`)
+2. Live Streamlit chat with agent activity panel
+3. Complex RLM query: *"Summarize payment failure outages and recurring root causes"*
+4. RBAC: viewer vs admin restricted doc access
+5. LangSmith trace walkthrough
+6. Security: injection blocked, rate limit
+7. Assumptions and production next steps
 
 ## License
 
