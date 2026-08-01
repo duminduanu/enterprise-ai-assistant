@@ -41,6 +41,11 @@ class Settings(BaseSettings):
 
     rate_limit_requests_per_minute: int = 20
 
+    llm_timeout_seconds: int = 45
+    tool_timeout_seconds: int = 30
+    mcp_timeout_seconds: int = 15
+    agent_timeout_seconds: int = 120
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

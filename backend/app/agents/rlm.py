@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import re
@@ -19,6 +18,8 @@ from backend.app.agents.prompts import (
     RLM_PLAN_PROMPT,
 )
 from backend.app.agents.state import AgentState
+from backend.app.core.async_utils import invoke_llm
+from backend.app.core.config import get_settings
 from backend.app.llm.provider import get_chat_llm
 from backend.app.observability.langsmith_config import build_run_config
 from backend.app.retrieval import HybridRetriever
@@ -161,13 +162,14 @@ async def _generate_plan(question: str, state: AgentState) -> ResearchPlan:
     )
 
     try:
-        response = await asyncio.to_thread(
-            llm.invoke,
+        response = await invoke_llm(
+            llm,
             [
                 SystemMessage(content=RLM_PLAN_PROMPT),
                 HumanMessage(content=f"Question: {question}"),
             ],
             config=run_config,
+            timeout_seconds=get_settings().llm_timeout_seconds,
         )
         parsed = _parse_json(str(response.content))
         return _plan_from_dict(parsed, question, defaults)
@@ -197,8 +199,8 @@ async def _analyze_batch(
     )
 
     try:
-        response = await asyncio.to_thread(
-            llm.invoke,
+        response = await invoke_llm(
+            llm,
             [
                 SystemMessage(content=RLM_BATCH_ANALYSIS_PROMPT),
                 HumanMessage(
@@ -212,6 +214,7 @@ async def _analyze_batch(
                 ),
             ],
             config=run_config,
+            timeout_seconds=get_settings().llm_timeout_seconds,
         )
         summary = str(response.content).strip()
         if summary:
@@ -242,8 +245,8 @@ async def _aggregate_summaries(
     )
 
     try:
-        response = await asyncio.to_thread(
-            llm.invoke,
+        response = await invoke_llm(
+            llm,
             [
                 SystemMessage(content=RLM_AGGREGATE_PROMPT),
                 HumanMessage(
@@ -255,6 +258,7 @@ async def _aggregate_summaries(
                 ),
             ],
             config=run_config,
+            timeout_seconds=get_settings().llm_timeout_seconds,
         )
         notes = str(response.content).strip()
         if notes:
@@ -344,12 +348,16 @@ async def _search_batch(
         department=state.get("department"),
         document_type=state.get("document_type"),
     )
-    return await retriever.asearch(
-        query,
-        user_role=state.get("user_role", "viewer"),
-        top_k=4,
-        filters=filters,
-    )
+    try:
+        return await retriever.asearch(
+            query,
+            user_role=state.get("user_role", "viewer"),
+            top_k=4,
+            filters=filters,
+        )
+    except Exception as exc:
+        logger.warning("RLM batch search failed for query=%r: %s", query[:80], exc)
+        return []
 
 
 def _hits_to_docs(hits: list[RetrievalHit]) -> list[dict[str, Any]]:

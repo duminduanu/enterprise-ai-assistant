@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import uuid
 from typing import Any
@@ -10,12 +11,18 @@ from typing import Any
 from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.prebuilt import ToolNode
 
+from backend.app.core.config import get_settings
+from backend.app.core.exceptions import ToolTimeoutError
+from backend.app.core.async_utils import run_tool_with_timeout
+from backend.app.core.fallbacks import tool_failure_payload
 from backend.app.retrieval import HybridRetriever
 from backend.app.security.rbac import can_use_tool
 from backend.app.security.tool_validation import validate_tool_call
 from backend.app.tools.knowledge_search import create_knowledge_search_tool
 from backend.app.tools.mcp_tools import create_mcp_tools
 from backend.app.tools.python_analysis import create_python_analysis_tool
+
+logger = logging.getLogger(__name__)
 
 ANALYSIS_QUERY_PATTERNS = (
     r"\bhow many\b",
@@ -253,7 +260,44 @@ async def run_tool_node(
     )
 
     ai_message = AIMessage(content="", tool_calls=tool_calls_payload)
-    tool_result = await tool_node.ainvoke({"messages": [ai_message]})
+    settings = get_settings()
+    tool_names = ", ".join(c["name"] for c in tool_calls_payload)
+
+    try:
+        tool_result = await run_tool_with_timeout(
+            tool_node.ainvoke({"messages": [ai_message]}),
+            timeout_seconds=settings.tool_timeout_seconds,
+            tool_name=tool_names,
+        )
+    except ToolTimeoutError as exc:
+        events.append(
+            make_event(
+                "tools",
+                "tools_failed",
+                str(exc.message),
+                tools=[c["name"] for c in tool_calls_payload],
+            )
+        )
+        return {
+            "current_node": "tools",
+            "analysis_results": tool_failure_payload(tool_names, str(exc.message)),
+            "agent_events": events,
+        }
+    except Exception as exc:
+        logger.warning("ToolNode execution failed: %s", exc)
+        events.append(
+            make_event(
+                "tools",
+                "tools_failed",
+                f"Tool execution failed: {exc}",
+                tools=[c["name"] for c in tool_calls_payload],
+            )
+        )
+        return {
+            "current_node": "tools",
+            "analysis_results": tool_failure_payload(tool_names, str(exc)[:200]),
+            "agent_events": events,
+        }
 
     analysis_results: list[str] = []
     mcp_results: list[str] = []

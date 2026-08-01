@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from contextlib import asynccontextmanager
 
@@ -58,6 +59,7 @@ def create_app() -> FastAPI:
     async def request_context_middleware(request: Request, call_next):
         request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
         request.state.request_id = request_id
+        started = time.perf_counter()
         logger.info(
             "Request started",
             extra={
@@ -75,6 +77,13 @@ def create_app() -> FastAPI:
                 request.url.path,
             )
             raise
+        duration_ms = (time.perf_counter() - started) * 1000
+        logger.info(
+            "Request completed request_id=%s status=%s duration_ms=%.1f",
+            request_id,
+            response.status_code,
+            duration_ms,
+        )
         response.headers["X-Request-ID"] = request_id
         return response
 

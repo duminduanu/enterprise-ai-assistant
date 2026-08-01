@@ -8,7 +8,12 @@ from typing import Any
 from langchain_core.messages import AIMessage, HumanMessage
 from langsmith import traceable
 
+from backend.app.agents.events import make_event
 from backend.app.agents.graph import get_compiled_agent_graph
+from backend.app.core.async_utils import run_agent_with_timeout
+from backend.app.core.config import get_settings
+from backend.app.core.exceptions import AgentTimeoutError
+from backend.app.core.fallbacks import agent_timeout_answer
 from backend.app.memory.session_store import (
     contextualize_question,
     get_session_store,
@@ -78,7 +83,30 @@ async def run_agent(
         },
     )
 
-    result = await graph.ainvoke(initial_state, config=config)
+    settings = get_settings()
+    try:
+        result = await run_agent_with_timeout(
+            graph.ainvoke(initial_state, config=config),
+            timeout_seconds=settings.agent_timeout_seconds,
+        )
+    except AgentTimeoutError as exc:
+        logger.warning("Agent run timed out request_id=%s session_id=%s", request_id, session_id)
+        result = {
+            "final_answer": agent_timeout_answer(),
+            "validation_passed": False,
+            "validation_issues": [str(exc.message)],
+            "current_node": "timeout",
+            "route": "retrieval",
+            "retrieved_docs": [],
+            "agent_events": [
+                make_event(
+                    "system",
+                    "agent_timeout",
+                    str(exc.message),
+                    request_id=request_id,
+                )
+            ],
+        }
 
     answer = result.get("final_answer") or ""
     await store.append_turn(session_id, "user", message)

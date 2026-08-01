@@ -19,7 +19,7 @@ from backend.app.api.schemas import (
     SearchResponse,
 )
 from backend.app.core.config import get_settings
-from backend.app.core.exceptions import RetrievalError, ValidationError
+from backend.app.core.exceptions import AppError, LLMError, RetrievalError, ValidationError
 from backend.app.retrieval import HybridRetriever
 from backend.app.retrieval.schemas import RetrievalFilters, RetrievalHit
 from backend.app.security.prompt_injection import check_user_input
@@ -56,11 +56,15 @@ async def chat(
             department=body.department,
             document_type=body.document_type,
         )
+    except AppError:
+        raise
     except FileNotFoundError as exc:
         raise RetrievalError(str(exc)) from exc
     except Exception as exc:
         logger.exception("Agent run failed request_id=%s", request_id)
-        raise RetrievalError("Agent orchestration is temporarily unavailable") from exc
+        raise LLMError(
+            "The assistant encountered an unexpected error. Please try again."
+        ) from exc
 
     hits = docs_to_hits(result.get("retrieved_docs") or [])
     citations = [_hit_to_citation(hit) for hit in hits]
@@ -116,14 +120,22 @@ async def search(
         department=body.department,
         document_type=body.document_type,
     )
-    hits = await _run_search(
-        query=body.query,
-        user_role=current_user.role,
-        top_k=body.top_k,
-        filters=filters,
-        retriever=retriever,
-        request_id=request_id,
-    )
+    try:
+        hits = await _run_search(
+            query=body.query,
+            user_role=current_user.role,
+            top_k=body.top_k,
+            filters=filters,
+            retriever=retriever,
+            request_id=request_id,
+        )
+    except FileNotFoundError as exc:
+        raise RetrievalError(str(exc)) from exc
+    except AppError:
+        raise
+    except Exception as exc:
+        logger.exception("Search failed request_id=%s", request_id)
+        raise RetrievalError("Search is temporarily unavailable") from exc
     return SearchResponse(
         query=body.query,
         results=[hit.to_dict() for hit in hits],

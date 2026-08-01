@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import re
@@ -14,6 +13,10 @@ from backend.app.agents.events import make_event
 from backend.app.agents.prompts import RESPONSE_PROMPT, SUPERVISOR_PROMPT
 from backend.app.agents.rlm import run_rlm_pipeline
 from backend.app.agents.state import AgentState, Route
+from backend.app.core.async_utils import invoke_llm, run_tool_with_timeout
+from backend.app.core.config import get_settings
+from backend.app.core.exceptions import LLMError, ToolTimeoutError
+from backend.app.core.fallbacks import llm_unavailable_answer, retrieval_failed_message
 from backend.app.llm.provider import get_chat_llm
 from backend.app.memory.session_store import contextualize_question, format_history_for_prompt
 from backend.app.security.guardrails import validate_answer_guardrails
@@ -75,16 +78,35 @@ class AgentNodes:
             state["user_question"],
             state.get("chat_history") or [],
         )
-        raw = await self._knowledge_search.ainvoke(
-            {
-                "query": search_query,
-                "top_k": 5,
-                "department": state.get("department"),
-                "document_type": state.get("document_type"),
-                "user_role": state.get("user_role", "viewer"),
+        settings = get_settings()
+        try:
+            raw = await run_tool_with_timeout(
+                self._knowledge_search.ainvoke(
+                    {
+                        "query": search_query,
+                        "top_k": 5,
+                        "department": state.get("department"),
+                        "document_type": state.get("document_type"),
+                        "user_role": state.get("user_role", "viewer"),
+                    }
+                ),
+                timeout_seconds=settings.tool_timeout_seconds,
+                tool_name="knowledge_search",
+            )
+            docs = json.loads(raw)
+        except (ToolTimeoutError, json.JSONDecodeError, Exception) as exc:
+            logger.warning("Retrieval node failed: %s", exc)
+            return {
+                "retrieved_docs": [],
+                "current_node": "retrieval",
+                "agent_events": [
+                    make_event(
+                        "retrieval",
+                        "retrieval_failed",
+                        retrieval_failed_message(str(exc)[:120]),
+                    )
+                ],
             }
-        )
-        docs = json.loads(raw)
 
         return {
             "retrieved_docs": docs,
@@ -152,9 +174,9 @@ class AgentNodes:
         try:
             answer = await self._generate_answer(question, context, state)
             llm_available = True
-        except Exception:
+        except (LLMError, Exception):
             logger.exception("Response node LLM failed")
-            answer = _fallback_answer(question, docs)
+            answer = llm_unavailable_answer(question, docs)
             llm_available = False
 
         return {
@@ -213,6 +235,7 @@ class AgentNodes:
     ) -> tuple[Route, str]:
         heuristic_route, heuristic_plan = _heuristic_route(question)
         llm = get_chat_llm()
+        settings = get_settings()
         run_config = build_run_config(
             run_name="supervisor_routing",
             request_id=state.get("request_id"),
@@ -222,13 +245,14 @@ class AgentNodes:
         )
 
         try:
-            response = await asyncio.to_thread(
-                llm.invoke,
+            response = await invoke_llm(
+                llm,
                 [
                     SystemMessage(content=SUPERVISOR_PROMPT),
                     HumanMessage(content=_supervisor_prompt(question, state)),
                 ],
                 config=run_config,
+                timeout_seconds=settings.llm_timeout_seconds,
             )
             parsed = _parse_json(str(response.content))
             route = parsed.get("route", heuristic_route)
@@ -268,6 +292,7 @@ class AgentNodes:
         state: AgentState,
     ) -> str:
         llm = get_chat_llm()
+        settings = get_settings()
         run_config = build_run_config(
             run_name="agent_response",
             request_id=state.get("request_id"),
@@ -296,8 +321,8 @@ class AgentNodes:
         history_block = format_history_for_prompt(state.get("chat_history") or [])
         history_section = f"\n\nConversation history:\n{history_block}" if history_block else ""
 
-        response = await asyncio.to_thread(
-            llm.invoke,
+        response = await invoke_llm(
+            llm,
             [
                 SystemMessage(content=RESPONSE_PROMPT),
                 HumanMessage(
@@ -308,6 +333,7 @@ class AgentNodes:
                 ),
             ],
             config=run_config,
+            timeout_seconds=settings.llm_timeout_seconds,
         )
         content = str(response.content).strip()
         if not content:
@@ -363,22 +389,3 @@ def _format_context(docs: list[dict[str, Any]]) -> str:
         wrapped = wrap_untrusted_document(body, source_file=source, title=title)
         blocks.append(f"[Document {i}]\n{wrapped}")
     return "\n\n".join(blocks)
-
-
-def _fallback_answer(question: str, docs: list[dict[str, Any]]) -> str:
-    if not docs:
-        return (
-            "I could not find relevant information in the knowledge base to answer your question. "
-            "(LLM synthesis unavailable — retrieval-only mode.)"
-        )
-
-    lines = [
-        "Retrieval-only response (LLM temporarily unavailable). Top matching sources:",
-    ]
-    for i, doc in enumerate(docs[:3], start=1):
-        lines.append(
-            f"{i}. [{doc.get('source_file')}] {doc.get('title')} — "
-            f"{doc.get('section_heading', '')}"
-        )
-    lines.append(f"\nQuestion received: {question}")
-    return "\n".join(lines)

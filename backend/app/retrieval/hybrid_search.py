@@ -7,6 +7,7 @@ from typing import Any
 
 from langsmith import traceable
 
+from backend.app.core.async_utils import run_blocking
 from backend.app.retrieval.config import (
     ROLE_ACCESS_LEVELS,
     RetrievalSettings,
@@ -46,21 +47,31 @@ class HybridRetriever:
         candidate_k = self.settings.candidate_k
         alpha = alpha if alpha is not None else self.settings.hybrid_alpha
 
-        dense_hits = self._dense.search(query, top_k=candidate_k, filters=filters)
-        sparse_hits = self._sparse.search(query, top_k=candidate_k, filters=filters)
+        dense_hits: list[RetrievalHit] = []
+        dense_failed = False
+        try:
+            dense_hits = self._dense.search(query, top_k=candidate_k, filters=filters)
+        except Exception as exc:
+            dense_failed = True
+            logger.warning("Dense (Pinecone) search failed; falling back to sparse-only: %s", exc)
 
-        merged = _merge_hits(dense_hits, sparse_hits, alpha=alpha)
+        sparse_hits = self._sparse.search(query, top_k=candidate_k, filters=filters)
+        if dense_failed and not sparse_hits:
+            logger.error("Both dense and sparse search returned no results for query=%r", query[:80])
+
+        merged = _merge_hits(dense_hits, sparse_hits, alpha=alpha if not dense_failed else 0.0)
         filtered = _apply_rbac(merged, user_role=user_role)
         filtered.sort(key=lambda h: h.hybrid_score, reverse=True)
 
         logger.info(
-            "Hybrid search query=%r role=%s dense=%d sparse=%d merged=%d returned=%d",
+            "Hybrid search query=%r role=%s dense=%d sparse=%d merged=%d returned=%d dense_failed=%s",
             query[:80],
             user_role,
             len(dense_hits),
             len(sparse_hits),
             len(merged),
             min(top_k, len(filtered)),
+            dense_failed,
         )
         return filtered[:top_k]
 
@@ -73,8 +84,9 @@ class HybridRetriever:
         filters: RetrievalFilters | None = None,
         alpha: float | None = None,
     ) -> list[RetrievalHit]:
-        """Async wrapper for use in FastAPI / LangGraph nodes."""
-        return self.search(
+        """Async wrapper — runs blocking retrieval in a thread pool."""
+        return await run_blocking(
+            self.search,
             query,
             user_role=user_role,
             top_k=top_k,
