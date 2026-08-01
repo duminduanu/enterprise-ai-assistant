@@ -1,0 +1,42 @@
+[
+  {
+    "employee_id": "E10234",
+    "name": "Sarah Chen",
+    "email": "sarah.chen@commercialbank.com",
+    "department": "Platform Engineering",
+    "title": "Director, Payment Platform",
+    "location": "New York"
+  },
+  {
+    "employee_id": "E10456",
+    "name": "Marcus Williams",
+    "email": "marcus.williams@commercialbank.com",
+    "department": "Site Reliability",
+    "title": "SRE Lead, Core Payments",
+    "location": "Chicago"
+  },
+  {
+    "employee_id": "E10789",
+    "name": "Priya Patel",
+    "email": "priya.patel@commercialbank.com",
+    "department": "Information Security",
+    "title": "Security Architect",
+    "location": "Remote"
+  },
+  {
+    "employee_id": "E11002",
+    "name": "James Okafor",
+    "email": "james.okafor@commercialbank.com",
+    "department": "Data Engineering",
+    "title": "Principal Engineer, Analytics",
+    "location": "London"
+  },
+  {
+    "employee_id": "E11220",
+    "name": "Emily Rodriguez",
+    "email": "emily.rodriguez@commercialbank.com",
+    "department": "Product",
+    "title": "Product Manager, Mobile Banking",
+    "location": "Austin"
+  }
+]

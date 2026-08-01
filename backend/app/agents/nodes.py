@@ -272,6 +272,9 @@ class AgentNodes:
         analysis_results = state.get("analysis_results")
         if analysis_results:
             extra_parts.append(f"Tool analysis results:\n{analysis_results}")
+        mcp_results = state.get("mcp_results")
+        if mcp_results:
+            extra_parts.append(f"MCP enterprise data:\n{mcp_results}")
         extra = f"\n\n{chr(10).join(extra_parts)}" if extra_parts else ""
 
         response = await asyncio.to_thread(

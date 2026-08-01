@@ -1,0 +1,57 @@
+[
+  {
+    "incident_id": "INC-2024-0847",
+    "title": "Payment Gateway Timeout Outage",
+    "status": "closed",
+    "severity": "SEV-1",
+    "service": "Core Payments Platform",
+    "owner": "Marcus Williams",
+    "opened_at": "2024-11-18T14:22:00Z",
+    "closed_at": "2024-11-18T16:45:00Z",
+    "customer_impact": "12% of card transactions failed for 2h 23m"
+  },
+  {
+    "incident_id": "INC-2025-0042",
+    "title": "Redis Cache Failure — Mobile Payments",
+    "status": "closed",
+    "severity": "SEV-2",
+    "service": "Core Payments Platform",
+    "owner": "Marcus Williams",
+    "opened_at": "2025-01-09T09:10:00Z",
+    "closed_at": "2025-01-09T11:30:00Z",
+    "customer_impact": "Mobile payment auth latency elevated; 3% failure rate"
+  },
+  {
+    "incident_id": "INC-2025-0189",
+    "title": "Bad Deployment Causing Payment Failures",
+    "status": "closed",
+    "severity": "SEV-2",
+    "service": "Payment Gateway Adapter",
+    "owner": "Sarah Chen",
+    "opened_at": "2025-02-03T18:05:00Z",
+    "closed_at": "2025-02-03T19:20:00Z",
+    "customer_impact": "Deployment rollback required; 8% failure spike"
+  },
+  {
+    "incident_id": "INC-2025-0267",
+    "title": "API Rate Limit Cascade",
+    "status": "monitoring",
+    "severity": "SEV-3",
+    "service": "Mobile Banking API",
+    "owner": "Emily Rodriguez",
+    "opened_at": "2025-02-20T07:30:00Z",
+    "closed_at": null,
+    "customer_impact": "Intermittent 429 errors on mobile checkout"
+  },
+  {
+    "incident_id": "INC-2024-1120",
+    "title": "Restricted Fraud Ring Investigation",
+    "status": "closed",
+    "severity": "SEV-1",
+    "service": "Fraud Scoring Engine",
+    "owner": "Priya Patel",
+    "opened_at": "2024-10-02T11:00:00Z",
+    "closed_at": "2024-10-15T17:00:00Z",
+    "customer_impact": "Internal investigation — restricted access"
+  }
+]

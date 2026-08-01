@@ -1,0 +1,52 @@
+[
+  {
+    "service_id": "SVC-PAY-001",
+    "name": "Core Payments Platform",
+    "description": "Real-time payment processing, gateway routing, settlement orchestration",
+    "owner": "Sarah Chen",
+    "owner_email": "sarah.chen@commercialbank.com",
+    "on_call_rotation": "payments-platform-oncall",
+    "tier": "critical",
+    "dependencies": ["payment-gateway", "redis-cache", "fraud-scoring"]
+  },
+  {
+    "service_id": "SVC-PAY-002",
+    "name": "Payment Gateway Adapter",
+    "description": "External PSP integration and failover routing",
+    "owner": "Marcus Williams",
+    "owner_email": "marcus.williams@commercialbank.com",
+    "on_call_rotation": "payments-sre-oncall",
+    "tier": "critical",
+    "dependencies": ["core-payments", "certificate-manager"]
+  },
+  {
+    "service_id": "SVC-MOB-001",
+    "name": "Mobile Banking API",
+    "description": "Customer-facing mobile transaction APIs",
+    "owner": "Emily Rodriguez",
+    "owner_email": "emily.rodriguez@commercialbank.com",
+    "on_call_rotation": "mobile-oncall",
+    "tier": "high",
+    "dependencies": ["core-payments", "identity-service"]
+  },
+  {
+    "service_id": "SVC-FRD-001",
+    "name": "Fraud Scoring Engine",
+    "description": "Real-time transaction fraud detection",
+    "owner": "Priya Patel",
+    "owner_email": "priya.patel@commercialbank.com",
+    "on_call_rotation": "security-oncall",
+    "tier": "critical",
+    "dependencies": ["vendor-fraud-api"]
+  },
+  {
+    "service_id": "SVC-AN-001",
+    "name": "Payment Analytics Dashboard",
+    "description": "Operational metrics and payment failure analytics",
+    "owner": "James Okafor",
+    "owner_email": "james.okafor@commercialbank.com",
+    "on_call_rotation": "data-platform-oncall",
+    "tier": "medium",
+    "dependencies": ["event-stream", "warehouse"]
+  }
+]

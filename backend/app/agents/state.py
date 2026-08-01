@@ -32,6 +32,7 @@ class AgentState(TypedDict, total=False):
     sub_queries: list[str]
 
     analysis_results: str
+    mcp_results: str
     tool_calls: Annotated[list[dict[str, Any]], operator.add]
     agent_events: Annotated[list[dict[str, Any]], operator.add]
     current_node: str
