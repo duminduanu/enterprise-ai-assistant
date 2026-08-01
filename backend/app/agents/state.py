@@ -31,7 +31,8 @@ class AgentState(TypedDict, total=False):
     batch_summaries: list[dict[str, Any]]
     sub_queries: list[str]
 
-    tool_calls: list[dict[str, Any]]
+    analysis_results: str
+    tool_calls: Annotated[list[dict[str, Any]], operator.add]
     agent_events: Annotated[list[dict[str, Any]], operator.add]
     current_node: str
 

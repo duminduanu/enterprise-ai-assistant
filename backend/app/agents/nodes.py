@@ -18,6 +18,7 @@ from backend.app.llm.provider import get_chat_llm
 from backend.app.observability.langsmith_config import build_run_config
 from backend.app.retrieval import HybridRetriever
 from backend.app.retrieval.schemas import RetrievalFilters, RetrievalHit
+from backend.app.tools.registry import build_tool_node, build_tools, run_tool_node
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,11 @@ class AgentNodes:
 
     def __init__(self, retriever: HybridRetriever) -> None:
         self._retriever = retriever
+        self._tools = build_tools(retriever)
+        self._tool_node = build_tool_node(retriever)
+        self._knowledge_search = next(
+            tool for tool in self._tools if tool.name == "knowledge_search"
+        )
 
     async def supervisor(self, state: AgentState) -> dict[str, Any]:
         question = state["user_question"]
@@ -60,28 +66,39 @@ class AgentNodes:
         }
 
     async def retrieval(self, state: AgentState) -> dict[str, Any]:
-        hits = await self._search(
-            state["user_question"],
-            state,
+        raw = await self._knowledge_search.ainvoke(
+            {
+                "query": state["user_question"],
+                "top_k": 5,
+                "department": state.get("department"),
+                "document_type": state.get("document_type"),
+                "user_role": state.get("user_role", "viewer"),
+            }
         )
-        docs = []
-        for hit in hits:
-            doc = hit.to_dict()
-            doc["text"] = hit.text
-            docs.append(doc)
+        docs = json.loads(raw)
 
         return {
             "retrieved_docs": docs,
             "current_node": "retrieval",
+            "tool_calls": [
+                {
+                    "tool": "knowledge_search",
+                    "query": state["user_question"],
+                    "result_count": len(docs),
+                }
+            ],
             "agent_events": [
                 make_event(
                     "retrieval",
                     "retrieval_complete",
-                    f"Retrieved {len(docs)} document chunks",
+                    f"knowledge_search returned {len(docs)} document chunks",
                     top_sources=[d.get("source_file") for d in docs[:3]],
                 )
             ],
         }
+
+    async def tools(self, state: AgentState) -> dict[str, Any]:
+        return await run_tool_node(state, self._tool_node)
 
     async def research(self, state: AgentState) -> dict[str, Any]:
         question = state["user_question"]
@@ -252,6 +269,9 @@ class AgentNodes:
                 for b in batch_summaries
             )
             extra_parts.append(f"Batch partial summaries:\n{partials}")
+        analysis_results = state.get("analysis_results")
+        if analysis_results:
+            extra_parts.append(f"Tool analysis results:\n{analysis_results}")
         extra = f"\n\n{chr(10).join(extra_parts)}" if extra_parts else ""
 
         response = await asyncio.to_thread(

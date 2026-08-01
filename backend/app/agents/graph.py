@@ -16,13 +16,14 @@ def route_after_supervisor(state: AgentState) -> str:
 
 
 def build_agent_graph(retriever: HybridRetriever):
-    """Compile supervisor -> retrieval|research -> response -> validate graph."""
+    """Compile supervisor -> retrieval|research -> tools -> response -> validate graph."""
     nodes = AgentNodes(retriever)
 
     graph = StateGraph(AgentState)
     graph.add_node("supervisor", nodes.supervisor)
     graph.add_node("retrieval", nodes.retrieval)
     graph.add_node("research", nodes.research)
+    graph.add_node("tools", nodes.tools)
     graph.add_node("response", nodes.response)
     graph.add_node("validate", nodes.validate)
 
@@ -35,8 +36,9 @@ def build_agent_graph(retriever: HybridRetriever):
             "research": "research",
         },
     )
-    graph.add_edge("retrieval", "response")
-    graph.add_edge("research", "response")
+    graph.add_edge("retrieval", "tools")
+    graph.add_edge("research", "tools")
+    graph.add_edge("tools", "response")
     graph.add_edge("response", "validate")
     graph.add_edge("validate", END)
 
