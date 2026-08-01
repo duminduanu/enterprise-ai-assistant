@@ -53,6 +53,7 @@ htmlcov/
 *.log
 logs/
 .cache/
+data/processed/
 
 # Streamlit
 .streamlit/secrets.toml
