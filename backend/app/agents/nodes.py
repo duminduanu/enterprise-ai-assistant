@@ -13,7 +13,7 @@ from backend.app.agents.events import make_event
 from backend.app.agents.prompts import RESPONSE_PROMPT, SUPERVISOR_PROMPT
 from backend.app.agents.rlm import run_rlm_pipeline
 from backend.app.agents.state import AgentState, Route
-from backend.app.core.async_utils import invoke_llm, run_tool_with_timeout
+from backend.app.core.async_utils import invoke_llm, run_tool_with_timeout, stream_llm
 from backend.app.core.config import get_settings
 from backend.app.core.exceptions import LLMError, ToolTimeoutError
 from backend.app.core.fallbacks import llm_unavailable_answer, retrieval_failed_message
@@ -170,14 +170,21 @@ class AgentNodes:
         docs = state.get("retrieved_docs") or []
         context = _format_context(docs)
         question = state["user_question"]
+        stream_tokens = bool(state.get("stream_tokens"))
+        writer = _get_stream_writer() if stream_tokens else None
 
         try:
-            answer = await self._generate_answer(question, context, state)
+            if writer is not None:
+                answer = await self._generate_answer_stream(question, context, state, writer)
+            else:
+                answer = await self._generate_answer(question, context, state)
             llm_available = True
         except (LLMError, Exception):
             logger.exception("Response node LLM failed")
             answer = llm_unavailable_answer(question, docs)
             llm_available = False
+            if writer is not None:
+                writer({"type": "token", "content": answer})
 
         return {
             "final_answer": answer,
@@ -300,38 +307,11 @@ class AgentNodes:
             user_role=state.get("user_role"),
             tags=["agent", "response"],
         )
-        research_notes = state.get("research_notes")
-        batch_summaries = state.get("batch_summaries") or []
-        extra_parts = []
-        if research_notes:
-            extra_parts.append(f"Research notes:\n{research_notes}")
-        if batch_summaries:
-            partials = "\n".join(
-                f"- [{b.get('batch_id')}] {b.get('summary', '')[:300]}"
-                for b in batch_summaries
-            )
-            extra_parts.append(f"Batch partial summaries:\n{partials}")
-        analysis_results = state.get("analysis_results")
-        if analysis_results:
-            extra_parts.append(f"Tool analysis results:\n{analysis_results}")
-        mcp_results = state.get("mcp_results")
-        if mcp_results:
-            extra_parts.append(f"MCP enterprise data:\n{mcp_results}")
-        extra = f"\n\n{chr(10).join(extra_parts)}" if extra_parts else ""
-        history_block = format_history_for_prompt(state.get("chat_history") or [])
-        history_section = f"\n\nConversation history:\n{history_block}" if history_block else ""
+        messages = _build_response_messages(question, context, state)
 
         response = await invoke_llm(
             llm,
-            [
-                SystemMessage(content=RESPONSE_PROMPT),
-                HumanMessage(
-                    content=(
-                        f"Context:\n{context}{extra}{history_section}\n\n"
-                        f"Question: {question}\n\nAnswer:"
-                    )
-                ),
-            ],
+            messages,
             config=run_config,
             timeout_seconds=settings.llm_timeout_seconds,
         )
@@ -339,6 +319,83 @@ class AgentNodes:
         if not content:
             raise RuntimeError("Empty LLM response")
         return content
+
+    async def _generate_answer_stream(
+        self,
+        question: str,
+        context: str,
+        state: AgentState,
+        writer,
+    ) -> str:
+        llm = get_chat_llm()
+        settings = get_settings()
+        run_config = build_run_config(
+            run_name="agent_response",
+            request_id=state.get("request_id"),
+            session_id=state.get("session_id"),
+            user_role=state.get("user_role"),
+            tags=["agent", "response", "stream"],
+        )
+        messages = _build_response_messages(question, context, state)
+        parts: list[str] = []
+        async for token in stream_llm(
+            llm,
+            messages,
+            config=run_config,
+            timeout_seconds=settings.llm_timeout_seconds,
+        ):
+            parts.append(token)
+            writer({"type": "token", "content": token})
+        content = "".join(parts).strip()
+        if not content:
+            raise RuntimeError("Empty LLM stream response")
+        return content
+
+
+def _get_stream_writer():
+    try:
+        from langgraph.config import get_stream_writer
+
+        return get_stream_writer()
+    except Exception:
+        return None
+
+
+def _build_response_messages(
+    question: str,
+    context: str,
+    state: AgentState,
+) -> list[SystemMessage | HumanMessage]:
+    research_notes = state.get("research_notes")
+    batch_summaries = state.get("batch_summaries") or []
+    extra_parts = []
+    if research_notes:
+        extra_parts.append(f"Research notes:\n{research_notes}")
+    if batch_summaries:
+        partials = "\n".join(
+            f"- [{b.get('batch_id')}] {b.get('summary', '')[:300]}"
+            for b in batch_summaries
+        )
+        extra_parts.append(f"Batch partial summaries:\n{partials}")
+    analysis_results = state.get("analysis_results")
+    if analysis_results:
+        extra_parts.append(f"Tool analysis results:\n{analysis_results}")
+    mcp_results = state.get("mcp_results")
+    if mcp_results:
+        extra_parts.append(f"MCP enterprise data:\n{mcp_results}")
+    extra = f"\n\n{chr(10).join(extra_parts)}" if extra_parts else ""
+    history_block = format_history_for_prompt(state.get("chat_history") or [])
+    history_section = f"\n\nConversation history:\n{history_block}" if history_block else ""
+
+    return [
+        SystemMessage(content=RESPONSE_PROMPT),
+        HumanMessage(
+            content=(
+                f"Context:\n{context}{extra}{history_section}\n\n"
+                f"Question: {question}\n\nAnswer:"
+            )
+        ),
+    ]
 
 
 def _apply_role_route_policy(

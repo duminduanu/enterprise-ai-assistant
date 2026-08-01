@@ -42,3 +42,4 @@ class AgentState(TypedDict, total=False):
     validation_passed: bool
     validation_issues: list[str]
     llm_available: bool
+    stream_tokens: bool

@@ -7,8 +7,18 @@ import uuid
 
 from fastapi import APIRouter, Request
 from langsmith import traceable
+from sse_starlette.sse import EventSourceResponse
 
 from backend.app.agents.runner import docs_to_hits, run_agent
+from backend.app.agents.stream_runner import stream_agent
+from backend.app.agents.streaming import (
+    sse_agent_event,
+    sse_done,
+    sse_error,
+    sse_node,
+    sse_started,
+    sse_token,
+)
 from backend.app.api.deps import CurrentUserDep, RateLimitDep, RetrieverDep
 from backend.app.api.schemas import (
     AgentEvent,
@@ -28,6 +38,47 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1", tags=["chat"])
 
 
+def _validate_chat_message(message: str) -> None:
+    if not message.strip():
+        raise ValidationError("Message cannot be empty")
+    is_safe, violations = check_user_input(message)
+    if not is_safe:
+        raise ValidationError(f"Message blocked by security policy: {violations[0]}")
+
+
+def _build_chat_response(
+    *,
+    result: dict,
+    session_id: str,
+    user_role: str,
+) -> ChatResponse:
+    hits = docs_to_hits(result.get("retrieved_docs") or [])
+    citations = [_hit_to_citation(hit) for hit in hits]
+    agent_events = [
+        AgentEvent(
+            node=event.get("node", ""),
+            event_type=event.get("event_type", ""),
+            message=event.get("message", ""),
+            metadata=event.get("metadata") or {},
+        )
+        for event in result.get("agent_events") or []
+    ]
+    settings = get_settings()
+    return ChatResponse(
+        answer=result.get("final_answer") or "",
+        session_id=session_id,
+        citations=citations,
+        retrieval_count=len(citations),
+        model=settings.llm_model,
+        route=result.get("route"),
+        current_node=result.get("current_node"),
+        validation_passed=result.get("validation_passed"),
+        agent_events=agent_events,
+        history_turns=result.get("history_turns", 0),
+        user_role=user_role,
+    )
+
+
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
     request: Request,
@@ -40,12 +91,7 @@ async def chat(
     session_id = body.session_id or str(uuid.uuid4())
     user_role = current_user.role
 
-    if not body.message.strip():
-        raise ValidationError("Message cannot be empty")
-
-    is_safe, violations = check_user_input(body.message)
-    if not is_safe:
-        raise ValidationError(f"Message blocked by security policy: {violations[0]}")
+    _validate_chat_message(body.message)
 
     try:
         result = await run_agent(
@@ -66,40 +112,90 @@ async def chat(
             "The assistant encountered an unexpected error. Please try again."
         ) from exc
 
-    hits = docs_to_hits(result.get("retrieved_docs") or [])
-    citations = [_hit_to_citation(hit) for hit in hits]
-    agent_events = [
-        AgentEvent(
-            node=event.get("node", ""),
-            event_type=event.get("event_type", ""),
-            message=event.get("message", ""),
-            metadata=event.get("metadata") or {},
-        )
-        for event in result.get("agent_events") or []
-    ]
+    response = _build_chat_response(
+        result=result,
+        session_id=session_id,
+        user_role=user_role,
+    )
 
     logger.info(
         "Chat completed request_id=%s session_id=%s route=%s citations=%d",
         request_id,
         session_id,
         result.get("route"),
-        len(citations),
+        response.retrieval_count,
     )
 
-    settings = get_settings()
-    return ChatResponse(
-        answer=result.get("final_answer") or "",
-        session_id=session_id,
-        citations=citations,
-        retrieval_count=len(citations),
-        model=settings.llm_model,
-        route=result.get("route"),
-        current_node=result.get("current_node"),
-        validation_passed=result.get("validation_passed"),
-        agent_events=agent_events,
-        history_turns=result.get("history_turns", 0),
-        user_role=user_role,
-    )
+    return response
+
+
+@router.post("/chat/stream")
+async def chat_stream(
+    request: Request,
+    body: ChatRequest,
+    current_user: CurrentUserDep,
+    _rate_limit: RateLimitDep,
+) -> EventSourceResponse:
+    """SSE stream: agent node updates, agent events, LLM tokens, and final payload."""
+    request_id = getattr(request.state, "request_id", "unknown")
+    session_id = body.session_id or str(uuid.uuid4())
+    user_role = current_user.role
+
+    try:
+        _validate_chat_message(body.message)
+    except ValidationError as exc:
+        error_message = str(exc.message)
+
+        async def validation_error_stream():
+            yield sse_error(error_message, request_id=request_id)
+
+        return EventSourceResponse(validation_error_stream())
+
+    async def event_generator():
+        yield sse_started(session_id=session_id, request_id=request_id)
+        try:
+            async for item in stream_agent(
+                message=body.message,
+                user_role=user_role,
+                session_id=session_id,
+                request_id=request_id,
+                department=body.department,
+                document_type=body.document_type,
+            ):
+                item_type = item.get("type")
+                if item_type == "node":
+                    yield sse_node(
+                        node=item["node"],
+                        status=item.get("status", "complete"),
+                        current_node=item.get("current_node"),
+                        route=item.get("route"),
+                    )
+                elif item_type == "agent_event":
+                    yield sse_agent_event(item["event"])
+                elif item_type == "token":
+                    yield sse_token(item.get("content", ""))
+                elif item_type == "done":
+                    response = _build_chat_response(
+                        result=item["result"],
+                        session_id=session_id,
+                        user_role=user_role,
+                    )
+                    yield sse_done(response.model_dump())
+            logger.info(
+                "Chat stream completed request_id=%s session_id=%s",
+                request_id,
+                session_id,
+            )
+        except AppError as exc:
+            yield sse_error(exc.message, request_id=request_id)
+        except Exception:
+            logger.exception("Chat stream failed request_id=%s", request_id)
+            yield sse_error(
+                "The assistant encountered an unexpected error. Please try again.",
+                request_id=request_id,
+            )
+
+    return EventSourceResponse(event_generator())
 
 
 @router.post("/search", response_model=SearchResponse)

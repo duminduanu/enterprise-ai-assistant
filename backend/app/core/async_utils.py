@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+import time
+from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import TypeVar
 
 from backend.app.core.exceptions import AgentTimeoutError, LLMError, ToolTimeoutError
@@ -44,6 +45,42 @@ async def invoke_llm(llm, messages, *, config=None, timeout_seconds: float = 45)
         operation="LLM invoke",
         error_factory=lambda: LLMError("LLM request timed out — try again shortly"),
     )
+
+
+async def stream_llm(
+    llm,
+    messages,
+    *,
+    config=None,
+    timeout_seconds: float = 45,
+) -> AsyncIterator[str]:
+    """Stream text chunks from a LangChain chat model as they arrive."""
+    started = time.monotonic()
+    async for chunk in llm.astream(messages, config=config):
+        if time.monotonic() - started > timeout_seconds:
+            raise LLMError("LLM stream timed out — try again shortly")
+        text = _chunk_text(chunk)
+        if text:
+            yield text
+
+
+def _chunk_text(chunk) -> str:
+    content = getattr(chunk, "content", chunk)
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                parts.append(str(block.get("text", "")))
+            else:
+                parts.append(str(getattr(block, "text", block)))
+        return "".join(parts)
+    return str(content)
 
 
 async def run_tool_with_timeout(coro: Awaitable[T], *, timeout_seconds: float, tool_name: str) -> T:
