@@ -11,6 +11,7 @@ from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.prebuilt import ToolNode
 
 from backend.app.retrieval import HybridRetriever
+from backend.app.security.rbac import can_use_tool
 from backend.app.tools.knowledge_search import create_knowledge_search_tool
 from backend.app.tools.mcp_tools import create_mcp_tools
 from backend.app.tools.python_analysis import create_python_analysis_tool
@@ -132,7 +133,7 @@ def plan_tool_calls(state: dict[str, Any]) -> list[dict[str, Any]]:
     question = state.get("user_question", "")
     user_role = state.get("user_role", "viewer")
 
-    if needs_mcp_lookup(question, user_role):
+    if needs_mcp_lookup(question, user_role) and can_use_tool(user_role, "lookup_service"):
         tool_name, query = infer_mcp_tool(question)
         calls.append(
             {
@@ -142,7 +143,11 @@ def plan_tool_calls(state: dict[str, Any]) -> list[dict[str, Any]]:
             }
         )
 
-    if docs and needs_analysis(question):
+    if (
+        docs
+        and needs_analysis(question)
+        and can_use_tool(user_role, "python_analysis")
+    ):
         operation, field = infer_analysis_operation(question)
         args: dict[str, Any] = {
             "records_json": json.dumps(docs),
@@ -188,7 +193,19 @@ async def run_tool_node(
         }
 
     tool_calls_payload = []
+    events: list[dict[str, Any]] = []
     for call in planned:
+        if not can_use_tool(state.get("user_role", "viewer"), call["name"]):
+            events.append(
+                make_event(
+                    "tools",
+                    "tool_denied",
+                    f"Role cannot invoke {call['name']}",
+                    tool=call["name"],
+                    role=state.get("user_role"),
+                )
+            )
+            continue
         args = dict(call["args"])
         if call["name"] == "knowledge_search" and inject_user_role:
             args.setdefault("user_role", state.get("user_role", "viewer"))
@@ -201,20 +218,34 @@ async def run_tool_node(
             }
         )
 
+    if not tool_calls_payload:
+        return {
+            "current_node": "tools",
+            "agent_events": events
+            + [
+                make_event(
+                    "tools",
+                    "tools_skipped",
+                    "No permitted tools for this role/query",
+                )
+            ],
+        }
+
+    events.append(
+        make_event(
+            "tools",
+            "tools_started",
+            f"Executing {len(tool_calls_payload)} tool call(s)",
+            tools=[c["name"] for c in tool_calls_payload],
+        )
+    )
+
     ai_message = AIMessage(content="", tool_calls=tool_calls_payload)
     tool_result = await tool_node.ainvoke({"messages": [ai_message]})
 
     analysis_results: list[str] = []
     mcp_results: list[str] = []
     tool_calls_log: list[dict[str, Any]] = []
-    events = [
-        make_event(
-            "tools",
-            "tools_started",
-            f"Executing {len(planned)} tool call(s)",
-            tools=[c["name"] for c in planned],
-        )
-    ]
 
     for message in tool_result.get("messages", []):
         if isinstance(message, ToolMessage):

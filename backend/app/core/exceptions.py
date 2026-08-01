@@ -25,3 +25,13 @@ class LLMError(AppError):
 class ValidationError(AppError):
     def __init__(self, message: str) -> None:
         super().__init__(message, status_code=400)
+
+
+class UnauthorizedError(AppError):
+    def __init__(self, message: str = "Authentication required") -> None:
+        super().__init__(message, status_code=401)
+
+
+class ForbiddenError(AppError):
+    def __init__(self, message: str = "Insufficient permissions") -> None:
+        super().__init__(message, status_code=403)

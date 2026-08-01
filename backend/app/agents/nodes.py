@@ -16,6 +16,7 @@ from backend.app.agents.rlm import run_rlm_pipeline
 from backend.app.agents.state import AgentState, Route
 from backend.app.llm.provider import get_chat_llm
 from backend.app.memory.session_store import contextualize_question, format_history_for_prompt
+from backend.app.security.rbac import can_use_research_route
 from backend.app.observability.langsmith_config import build_run_config
 from backend.app.retrieval import HybridRetriever
 from backend.app.retrieval.schemas import RetrievalFilters, RetrievalHit
@@ -227,10 +228,13 @@ class AgentNodes:
             plan = parsed.get("plan", heuristic_plan)
             if route not in {"retrieval", "research"}:
                 route = heuristic_route
+            route, plan = _apply_role_route_policy(route, plan, state)
             return route, plan
         except Exception:
             logger.warning("Supervisor LLM routing failed; using heuristics")
-            return heuristic_route, heuristic_plan
+            route, plan = heuristic_route, heuristic_plan
+            route, plan = _apply_role_route_policy(route, plan, state)
+            return route, plan
 
     async def _search(
         self,
@@ -302,6 +306,17 @@ class AgentNodes:
         if not content:
             raise RuntimeError("Empty LLM response")
         return content
+
+
+def _apply_role_route_policy(
+    route: Route,
+    plan: str,
+    state: AgentState,
+) -> tuple[Route, str]:
+    role = state.get("user_role", "viewer")
+    if route == "research" and not can_use_research_route(role):
+        return "retrieval", f"{plan} (downgraded: {role} cannot use research route)"
+    return route, plan
 
 
 def _supervisor_prompt(question: str, state: AgentState) -> str:

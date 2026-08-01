@@ -47,6 +47,7 @@ class ChatResponse(BaseModel):
     validation_passed: bool | None = None
     agent_events: list[AgentEvent] = Field(default_factory=list)
     history_turns: int = 0
+    user_role: UserRole | None = None
 
 
 class HealthResponse(BaseModel):
@@ -72,3 +73,24 @@ class SearchRequest(BaseModel):
 class SearchResponse(BaseModel):
     query: str
     results: list[dict[str, Any]]
+
+
+class LoginRequest(BaseModel):
+    email: str = Field(..., min_length=3, max_length=200)
+    password: str = Field(..., min_length=6, max_length=128)
+
+
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    role: UserRole
+    user_id: str
+    email: str
+    display_name: str
+
+
+class UserProfile(BaseModel):
+    user_id: str
+    email: str
+    role: UserRole
+    display_name: str

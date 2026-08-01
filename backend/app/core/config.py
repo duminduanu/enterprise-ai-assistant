@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 8000
 
+    jwt_secret: str = "change-me-in-production"
+    jwt_expire_minutes: int = 480
+    auth_required: bool = False
+
     google_api_key: str = ""
     llm_model: str = "gemini-2.0-flash"
 

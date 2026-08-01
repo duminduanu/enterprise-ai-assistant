@@ -9,7 +9,7 @@ from fastapi import APIRouter, Request
 from langsmith import traceable
 
 from backend.app.agents.runner import docs_to_hits, run_agent
-from backend.app.api.deps import RetrieverDep
+from backend.app.api.deps import CurrentUserDep, RetrieverDep
 from backend.app.api.schemas import (
     AgentEvent,
     ChatRequest,
@@ -28,10 +28,15 @@ router = APIRouter(prefix="/api/v1", tags=["chat"])
 
 
 @router.post("/chat", response_model=ChatResponse)
-async def chat(request: Request, body: ChatRequest) -> ChatResponse:
+async def chat(
+    request: Request,
+    body: ChatRequest,
+    current_user: CurrentUserDep,
+) -> ChatResponse:
     """Multi-agent chat via LangGraph: supervisor -> retrieval|research -> response -> validate."""
     request_id = getattr(request.state, "request_id", "unknown")
     session_id = body.session_id or str(uuid.uuid4())
+    user_role = current_user.role
 
     if not body.message.strip():
         raise ValidationError("Message cannot be empty")
@@ -39,7 +44,7 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
     try:
         result = await run_agent(
             message=body.message,
-            user_role=body.user_role,
+            user_role=user_role,
             session_id=session_id,
             request_id=request_id,
             department=body.department,
@@ -83,11 +88,17 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
         validation_passed=result.get("validation_passed"),
         agent_events=agent_events,
         history_turns=result.get("history_turns", 0),
+        user_role=user_role,
     )
 
 
 @router.post("/search", response_model=SearchResponse)
-async def search(request: Request, body: SearchRequest, retriever: RetrieverDep) -> SearchResponse:
+async def search(
+    request: Request,
+    body: SearchRequest,
+    retriever: RetrieverDep,
+    current_user: CurrentUserDep,
+) -> SearchResponse:
     """Direct hybrid search endpoint for debugging and tooling."""
     request_id = getattr(request.state, "request_id", None)
     filters = RetrievalFilters(
@@ -96,7 +107,7 @@ async def search(request: Request, body: SearchRequest, retriever: RetrieverDep)
     )
     hits = await _run_search(
         query=body.query,
-        user_role=body.user_role,
+        user_role=current_user.role,
         top_k=body.top_k,
         filters=filters,
         retriever=retriever,
