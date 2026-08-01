@@ -1,0 +1,32 @@
+# Virtual env and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# Secrets (mounted via env_file at runtime)
+.env
+.env.*
+!.env.example
+
+# Git and IDE
+.git/
+.gitignore
+.idea/
+.vscode/
+
+# Local logs
+*.log
+logs/
+
+# Streamlit local secrets
+.streamlit/
+
+# Docs and dev notes (not needed in runtime image)
+docs/
+Temp Notes.txt

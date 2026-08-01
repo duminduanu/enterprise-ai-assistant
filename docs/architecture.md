@@ -74,6 +74,8 @@ stateDiagram-v2
 
 Collaboration details (shared state, failure chains, butterfly-effect containment): [multi-agent-collaboration.md](multi-agent-collaboration.md).
 
+**Container deployment:** `docker compose up --build` — see root [docker-compose.yml](../docker-compose.yml) and [README](../README.md#7-run-with-docker-compose-bonus).
+
 | Node | Responsibility |
 |------|----------------|
 | **supervisor** | Classify intent; route to direct retrieval or multi-doc research |

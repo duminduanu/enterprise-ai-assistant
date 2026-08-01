@@ -38,6 +38,8 @@ enterprise-ai-assistant/
 ├── mcp_server/        # MCP server with dummy enterprise data
 ├── scripts/           # Ingestion, mock data, integration tests
 ├── data/              # Mock documents + processed BM25 corpus
+├── docker/            # Backend & frontend Dockerfiles (Step S bonus)
+├── docker-compose.yml # One-command deploy
 └── docs/              # Architecture & memory design
 ```
 
@@ -118,6 +120,39 @@ streamlit run frontend/streamlit_app.py
 ```
 
 Open the URL shown (default `http://localhost:8501`). Sign in with a demo account (below) or use dev mode (viewer role via header when `AUTH_REQUIRED=false`).
+
+### 7. Run with Docker Compose (bonus)
+
+Containerized deployment for demos and evaluators who prefer not to install Python locally.
+
+**Prerequisites:** Docker Desktop (or Docker Engine + Compose v2), `.env` configured, and BM25 corpus generated:
+
+```bash
+python scripts/ingest_documents.py   # once, if data/processed/bm25_corpus.json is missing
+```
+
+**Start:**
+
+```bash
+docker compose up --build
+```
+
+| Service | URL |
+|---------|-----|
+| Streamlit UI | http://localhost:8501 |
+| FastAPI API | http://localhost:8000 |
+| Health check | http://localhost:8000/health |
+| Swagger | http://localhost:8000/docs |
+
+The frontend container uses `API_BASE_URL=http://backend:8000` on the internal Docker network. Your local `.env` `API_BASE_URL` is only for non-Docker runs.
+
+**Stop:**
+
+```bash
+docker compose down
+```
+
+Files: `docker-compose.yml`, `docker/backend.Dockerfile`, `docker/frontend.Dockerfile`.
 
 ## Demo users
 
@@ -246,6 +281,14 @@ Agents collaborate through shared **`AgentState`**: handoff notes, per-node stat
 python scripts/test_multi_agent_collaboration.py
 ```
 
+### Docker Compose (containerized deployment)
+
+Run the full stack (FastAPI + Streamlit) with one command. See [Setup §7](#7-run-with-docker-compose-bonus).
+
+```bash
+docker compose up --build
+```
+
 ## Assumptions & trade-offs
 
 | Decision | POC choice | Production alternative |
@@ -257,6 +300,7 @@ python scripts/test_multi_agent_collaboration.py
 | Memory | In-process per session | Redis / Postgres |
 | MCP | In-process client | Sidecar MCP over stdio/SSE |
 | Streaming | SSE from `/chat/stream` | WebSocket + CDN |
+| Deployment | Local venv or **Docker Compose** | Kubernetes / managed PaaS |
 
 ## Demo video
 
