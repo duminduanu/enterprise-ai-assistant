@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     hybrid_alpha: float = 0.7
     retrieval_top_k: int = 5
 
+    session_memory_max_turns: int = 10
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

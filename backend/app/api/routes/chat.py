@@ -82,6 +82,7 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
         current_node=result.get("current_node"),
         validation_passed=result.get("validation_passed"),
         agent_events=agent_events,
+        history_turns=result.get("history_turns", 0),
     )
 
 

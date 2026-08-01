@@ -46,6 +46,7 @@ class ChatResponse(BaseModel):
     current_node: str | None = None
     validation_passed: bool | None = None
     agent_events: list[AgentEvent] = Field(default_factory=list)
+    history_turns: int = 0
 
 
 class HealthResponse(BaseModel):

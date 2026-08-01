@@ -15,6 +15,7 @@ from backend.app.agents.prompts import RESPONSE_PROMPT, SUPERVISOR_PROMPT
 from backend.app.agents.rlm import run_rlm_pipeline
 from backend.app.agents.state import AgentState, Route
 from backend.app.llm.provider import get_chat_llm
+from backend.app.memory.session_store import contextualize_question, format_history_for_prompt
 from backend.app.observability.langsmith_config import build_run_config
 from backend.app.retrieval import HybridRetriever
 from backend.app.retrieval.schemas import RetrievalFilters, RetrievalHit
@@ -61,14 +62,19 @@ class AgentNodes:
                     "routing",
                     f"Routing to {route}",
                     plan=plan,
+                    history_turns=len(state.get("chat_history") or []),
                 )
             ],
         }
 
     async def retrieval(self, state: AgentState) -> dict[str, Any]:
+        search_query = contextualize_question(
+            state["user_question"],
+            state.get("chat_history") or [],
+        )
         raw = await self._knowledge_search.ainvoke(
             {
-                "query": state["user_question"],
+                "query": search_query,
                 "top_k": 5,
                 "department": state.get("department"),
                 "document_type": state.get("document_type"),
@@ -212,7 +218,7 @@ class AgentNodes:
                 llm.invoke,
                 [
                     SystemMessage(content=SUPERVISOR_PROMPT),
-                    HumanMessage(content=f"Question: {question}"),
+                    HumanMessage(content=_supervisor_prompt(question, state)),
                 ],
                 config=run_config,
             )
@@ -276,6 +282,8 @@ class AgentNodes:
         if mcp_results:
             extra_parts.append(f"MCP enterprise data:\n{mcp_results}")
         extra = f"\n\n{chr(10).join(extra_parts)}" if extra_parts else ""
+        history_block = format_history_for_prompt(state.get("chat_history") or [])
+        history_section = f"\n\nConversation history:\n{history_block}" if history_block else ""
 
         response = await asyncio.to_thread(
             llm.invoke,
@@ -283,7 +291,7 @@ class AgentNodes:
                 SystemMessage(content=RESPONSE_PROMPT),
                 HumanMessage(
                     content=(
-                        f"Context:\n{context}{extra}\n\n"
+                        f"Context:\n{context}{extra}{history_section}\n\n"
                         f"Question: {question}\n\nAnswer:"
                     )
                 ),
@@ -294,6 +302,13 @@ class AgentNodes:
         if not content:
             raise RuntimeError("Empty LLM response")
         return content
+
+
+def _supervisor_prompt(question: str, state: AgentState) -> str:
+    history = format_history_for_prompt(state.get("chat_history") or [], max_turns=3)
+    if history:
+        return f"Conversation so far:\n{history}\n\nCurrent question: {question}"
+    return f"Question: {question}"
 
 
 def _heuristic_route(question: str) -> tuple[Route, str]:

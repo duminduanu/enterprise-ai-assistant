@@ -22,6 +22,7 @@ class AgentState(TypedDict, total=False):
     request_id: str
     department: str | None
     document_type: str | None
+    chat_history: list[dict[str, str]]
 
     plan: str
     route: Route
