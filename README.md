@@ -38,7 +38,7 @@ enterprise-ai-assistant/
 ├── mcp_server/        # MCP server with dummy enterprise data
 ├── scripts/           # Ingestion, mock data, integration tests
 ├── data/              # Mock documents + processed BM25 corpus
-├── docker/            # Backend & frontend Dockerfiles (Step S bonus)
+├── docker/            # Backend & frontend Dockerfiles (bonus point)
 ├── docker-compose.yml # One-command deploy
 └── docs/              # Architecture & memory design
 ```
@@ -265,13 +265,14 @@ python scripts/test_multi_agent_collaboration.py
 
 ## Documentation
 
-| Doc | Description |
-|-----|-------------|
-| [docs/architecture.md](docs/architecture.md) | System diagram, agent graph, security, RLM |
-| [docs/memory-design.md](docs/memory-design.md) | Session memory design |
-| [docs/multi-agent-collaboration.md](docs/multi-agent-collaboration.md) | **Step S bonus:** shared state, handoffs, failure chains, butterfly effect |
+| Doc                                                                    | Description                                                                                        |
+|------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------|
+| [docs/architecture.md](docs/architecture.md)                           | System diagram, agent graph, security, RLM                                                         |
+| [docs/memory-design.md](docs/memory-design.md)                         | Session memory design                                                                              |
+| [docs/multi-agent-collaboration.md](docs/multi-agent-collaboration.md) | **bonus points:** shared state, handoffs, failure chains, butterfly effect                         |
+| [docs/demo-video-guide.pdf](docs/demo-video-script.md)                 | **Demo:** demo video guide ([PDF](docs/demo-video-guide.pdf)) |
 
-## Step S — Bonus features
+## Bonus features
 
 ### Multi-agent collaboration
 
@@ -306,6 +307,8 @@ docker compose up --build
 
 <!-- Add your public demo URL here after recording -->
 **Demo video:** _[Link to walkthrough — architecture, code, live demo, LangSmith traces]_
+
+**Preparation:** [PDF](docs/demo-video-guide.pdf)
 
 Suggested demo flow:
 
