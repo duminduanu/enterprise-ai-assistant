@@ -173,6 +173,16 @@ Files: `docker-compose.yml`, `docker/backend.Dockerfile`, `docker/frontend.Docke
 | POST | `/api/v1/chat/stream` | SSE stream (tokens + agent events) |
 | POST | `/api/v1/search` | Direct hybrid search (debug) |
 
+### Swagger UI (Authorize)
+
+Open **http://localhost:8000/docs** (or your API port). Protected routes show a global **Authorize** button:
+
+1. **POST /api/v1/auth/login** with a demo user (see table above) and copy `access_token` from the response.
+2. Click **Authorize**, paste **only** the token (no `Bearer` prefix — Swagger adds it).
+3. Call any protected endpoint; requests include `Authorization: Bearer <token>` automatically.
+
+`/health` and `/api/v1/auth/login` stay public in Swagger. Runtime auth is unchanged — Streamlit and curl still work the same way. For local dev without login, you can still send `X-User-Role` when `AUTH_REQUIRED=false`.
+
 ### Example: chat
 
 ```bash
@@ -306,7 +316,7 @@ docker compose up --build
 ## Demo video
 
 <!-- Add your public demo URL here after recording -->
-**Demo video:** _[Link to walkthrough — architecture, code, live demo, LangSmith traces]_
+**Demo video:** _[https://youtu.be/NmotjbHApNU]_
 
 **Preparation:** [PDF](docs/demo-video-guide.pdf)
 

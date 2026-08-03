@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from backend.app.api.openapi import configure_swagger_auth
 from backend.app.api.router import api_router
 from backend.app.api.schemas import ErrorResponse
 from backend.app.core.config import get_settings
@@ -89,6 +90,7 @@ def create_app() -> FastAPI:
 
     app.include_router(api_router)
 
+    configure_swagger_auth(app)
     register_exception_handlers(app)
     return app
 

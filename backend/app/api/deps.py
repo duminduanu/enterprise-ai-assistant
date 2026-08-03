@@ -51,7 +51,7 @@ def _user_from_bearer(authorization: str | None) -> CurrentUser | None:
 
 async def get_current_user(
     settings: SettingsDep,
-    authorization: Annotated[str | None, Header()] = None,
+    authorization: Annotated[str | None, Header(include_in_schema=False)] = None,
     x_user_role: Annotated[str | None, Header()] = None,
 ) -> CurrentUser:
     """
